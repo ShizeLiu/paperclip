@@ -62,7 +62,11 @@ export interface ChatActivityItem {
   id: string;
   kind: "delivery" | "publication" | "action" | "health" | "repair";
   actionType?:
-    "slash_task_start" | "provider_effect" | "github_webhook_ingress";
+    | "slash_task_start"
+    | "provider_effect"
+    | "github_webhook_ingress"
+    | "slack_session_sync"
+    | "slack_session_stop";
   status: string;
   summary: string;
   detail?: string | null;

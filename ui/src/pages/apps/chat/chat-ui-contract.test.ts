@@ -161,7 +161,12 @@ describe("chat connector UI contract", () => {
       "Enter the Application / Client ID above before copying",
     );
     expect(setup).toContain("not a complete app package");
-    expect(setup).toContain('scopes: ["personal", "team", "groupchat"]');
+    expect(setup).toContain('scopes: ["personal", "team", "groupChat"]');
+    expect(setup).toContain('scopes: ["personal", "groupChat"]');
+    expect(setup).toContain('title: "/status"');
+    expect(setup).toContain('title: "/new"');
+    expect(setup).toContain('title: "/close"');
+    expect(setup).not.toContain("supportsTargetedMessages");
     expect(setup).toContain("resourceSpecific");
     expect(setup).toContain("ChannelMessage.Read.Group");
     expect(setup).toContain("ChatMessage.Read.Chat");
@@ -171,6 +176,9 @@ describe("chat connector UI contract", () => {
     expect(setup).toContain('resource: "https://paperclip.ing"');
     expect(setup).toContain("only associates the RSC");
     expect(setup).toContain("you do not need to register an Entra");
+    expect(setup).toContain("receive every message");
+    expect(setup).toContain("One team install covers its standard");
+    expect(setup).toContain("Private and shared channels require");
     expect(setup).not.toContain(
       "does not require a <code>webApplicationInfo</code>",
     );
@@ -199,6 +207,10 @@ describe("chat connector UI contract", () => {
     expect(setup).toContain("- reactions:write");
     expect(setup).not.toContain("always_online");
     expect(setup).toContain("- reactions:read");
+    expect(setup).toContain("- assistant:write");
+    expect(setup).toContain("agent_view:");
+    expect(setup).toContain("agent_session_stopped");
+    expect(setup).not.toContain("assistant_view:");
     expect(setup).toContain("reaction_added");
     expect(setup).toContain("reaction_removed");
     expect(setup).toContain("home_tab_enabled: false");

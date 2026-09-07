@@ -72,6 +72,8 @@ The required v1 journeys stay in the browser. If Paperclip later ships a product
 - Re-read the visible page after navigation, provider redirects, modal submission, or account switching before taking the next action.
 - Use a separate authenticated browser profile/context for the installer, linked participant, and unlinked participant. Never switch identities in a way that leaves an ambiguous provider or Paperclip session.
 - Never read secrets back from Paperclip, browser storage, cookies, or password managers. Secret entry is write-only and screenshots must show only masked values.
+- Treat provider credential pages and BotFather conversations as secret-bearing for their entire lifetime, including loading and error states. Never request a full DOM snapshot, whole-page text, or screenshot on those surfaces: a loading error can resolve to a plaintext token before the diagnostic read executes. Inspect only explicitly allowlisted nonsecret labels, button states, and field types. Do not print field values, unrestricted parent text, or clipboard contents.
+- A provider credential value goes directly into Paperclip's masked field through the operator's handoff. Do not extract it for diagnostic evidence. If a value reaches tool output, stop using it, clear any copied value, record the exposure without repeating the secret, and require revocation/replacement before qualification resumes. Deleting a local log is not revocation and does not erase prior tool output.
 - Provider installation, repository grants, bot invitations, messages, file uploads, and permission changes are external side effects. Run them only in the approved sandbox resources below or under an explicit user-provided authorization envelope.
 - A CAPTCHA, tenant approval, organization approval, or provider security prompt pauses the run for the user. It is not bypassed.
 - Do not accept an unexpected permission request. Record the requested permission, abort that setup attempt, and fail least-privilege qualification.
@@ -346,6 +348,9 @@ Run this for every stable release, after any Slack manifest/scopes/events change
 1. In Paperclip, perform C1 and select Slack.
 2. On **Connect a Slack app**, copy the generated manifest and open Slack app settings.
 3. In Slack, choose **Create New App** → **From an app manifest**, select only the sandbox workspace, paste the manifest, and inspect its bot scopes before clicking **Create**. Abort if Slack shows scopes beyond the versioned Paperclip manifest.
+
+   The generated manifest declares `features.agent_view`, requests `assistant:write`, and subscribes to `agent_session_stopped`. This supplies native working status and Stop where Slack has enabled agent sessions. An existing app using legacy `assistant_view` needs an explicit operator migration: Slack documents that switching it to `agent_view` cannot be reversed. Reinstall after a scope change. See [Slack's manifest contract](https://docs.slack.dev/reference/app-manifest/) and [agent sessions](https://docs.slack.dev/ai/agent-sessions/).
+
 4. Open **OAuth & Permissions**, click **Install to Workspace**, review the consent page, approve it, and copy the **Bot User OAuth Token** into Paperclip's masked field.
 5. Open **Basic Information**, reveal the **Signing Secret**, and paste it directly into Paperclip's masked field. Do not capture either secret.
 6. Click **Connect Slack app**. Paperclip verifies the token and advances to **Finish Slack setup**.
@@ -395,9 +400,11 @@ Run C5 and C6, then verify specifically:
 - safe output uses Slack native streaming when available, otherwise one post edited at a bounded cadence;
 - `FORM` uses Block Kit buttons/selects and a modal for the text field; modal submission applies once;
 - files ingest and publish without exposing Paperclip credentials;
-- an unauthorized response uses an ephemeral message, with DM/text fallback only when ephemeral delivery fails;
+- an unauthorized action uses an ephemeral safe denial; any generic text fallback contains no private task/account details and does not open an unsolicited DM;
 - In the bot DM, the registered agent command with `status` returns the active task state; `new` advances the DM to a fresh task generation and `close` closes the active one. In a channel, Slack does not include a thread timestamp in slash-command payloads, so these controls return private guidance to use the task link in the native thread rather than guessing among channel tasks;
-- custom emoji failure falls back to a standard supported emoji;
+- the standard `eyes` receipt reaction is used without requiring a custom workspace emoji; retry/failure of that reaction does not re-admit the task or duplicate its message;
+- native session status tracks working, waiting for input, final output, and closed conversations. A status-only rate limit retries independently, without replaying a provider reply. A working run exceeding 30 minutes refreshes status before Slack's one-hour timeout;
+- as a linked non-viewer, click native **Stop** during a long response. Verify the exact task/run is stopped, the visible confirmation says it stopped at your request, and working status clears. Repeat the same event, deliver it late after a new turn, and try as an unlinked or revoked identity: no later/unrelated run may be cancelled. The Paperclip Activity tab records the result;
 - a duplicated Slack retry is deduplicated and visible in Activity.
 
 ### S6 — Slack DMs and recovery
@@ -518,8 +525,8 @@ Run before stable release and after identity, Teams manifest, or permission chan
 2. In the sandbox tenant's Microsoft Entra admin center, create a **single-tenant** app registration. Record its Application (client) ID and Directory (tenant) ID, create one client secret, and keep the secret value available only for immediate entry.
 3. In Azure, create an **Azure Bot** using that existing Application ID and the single-tenant identity type. Set its messaging endpoint to Paperclip's displayed URL and enable its Microsoft Teams channel.
 4. In Teams Developer Portal, select **Apps > New app**. Under **Configure > App features > Bot**, add the existing bot using the same Application ID and enable Personal, Team, and Group chat scopes plus file support. Under **Configure > Permissions**, add the RSC application permissions in the next step. Complete the required app metadata and icons; Paperclip's copied block is a field reference, not a complete app package.
-5. Add the resource-specific permissions required by the shipped manifest: `ChannelMessage.Read.Group` for subscribed channel-thread replies and `ChatMessage.Read.Chat` for group-chat messages. Do not grant tenant-wide directory/history permissions.
-   Keep the copied `webApplicationInfo.id` equal to the same Entra Application ID so Teams can bind those RSC permissions to the app, and keep its nonempty RSC-only `resource` value. Paperclip does not use Teams single sign-on in this release; the resource is only an RSC placeholder, so this connection does not require registering an Entra Application ID URI or adding delegated Microsoft Graph permissions.
+5. Add the resource-specific application permissions required by the shipped manifest: `ChannelMessage.Read.Group` and `ChatMessage.Read.Chat`. These RSC grants let the installed app receive every message in that team or group chat without an `@mention`; explain that provider access in the app description shown to installers. Paperclip still retains and acts only on messages admitted by its reach/access rules. Do not grant tenant-wide directory/history permissions.
+   Keep the copied `webApplicationInfo.id` equal to the same Entra Application ID so Teams can bind those RSC permissions to the app, and keep its nonempty RSC-only `resource` value. Paperclip does not use Teams single sign-on in this release; the resource is only an RSC placeholder, so this connection does not require registering an Entra Application ID URI or adding delegated Microsoft Graph permissions. One team install covers that team's standard channels. Private and shared channels require a separate installation and are not supported by this release.
 6. Download the app package, then in Teams use **Apps > Manage your apps > Upload an app > Upload a custom app**, or publish it to the sandbox organization according to tenant policy.
 7. Return to Paperclip. Enter only Application/Client ID, Directory/Tenant ID, and the client-secret value, then click **Verify Microsoft credentials**. Confirm the secret remains masked and is not shown again.
 8. In Teams, open the app installation surface, click **Add**, and install it into `Paperclip Chat E2E` and personal scope when prompted.

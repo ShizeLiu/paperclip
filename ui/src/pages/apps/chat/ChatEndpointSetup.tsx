@@ -473,6 +473,8 @@ features:
     home_tab_enabled: false
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
+  agent_view:
+    agent_description: "Work with a Paperclip agent in a task-backed conversation."
   bot_user:
     display_name: ${JSON.stringify(slackBotName)}
   slash_commands:
@@ -485,6 +487,7 @@ oauth_config:
   scopes:
     bot:
       - app_mentions:read
+      - assistant:write
       - channels:history
       - channels:read
       - chat:write
@@ -507,6 +510,7 @@ settings:
   event_subscriptions:
     request_url: ${JSON.stringify(slackWebhookUrl)}
     bot_events:
+      - agent_session_stopped
       - app_mention
       - message.channels
       - message.groups
@@ -537,9 +541,28 @@ settings:
       bots: [
         {
           botId: teamsClientId,
-          scopes: ["personal", "team", "groupchat"],
+          scopes: ["personal", "team", "groupChat"],
           supportsFiles: true,
           isNotificationOnly: false,
+          commandLists: [
+            {
+              scopes: ["personal", "groupChat"],
+              commands: [
+                {
+                  title: "/status",
+                  description: "Show the active Paperclip task status",
+                },
+                {
+                  title: "/new",
+                  description: "Start a new Paperclip task in this chat",
+                },
+                {
+                  title: "/close",
+                  description: "Close the active Paperclip task",
+                },
+              ],
+            },
+          ],
         },
       ],
       webApplicationInfo: {
@@ -725,9 +748,11 @@ settings:
             In Teams Developer Portal, create an app, add a bot with the same
             Application ID, then apply the manifest settings shown below. The
             block binds the Teams resource-specific consent permissions to that
-            Entra app; these are not Microsoft Graph permissions in Entra.
-            Download the package and upload it to the target standard channel or
-            chat.
+            Entra app; these are not Microsoft Graph permissions in Entra. These
+            permissions let the installed app receive every message in a team or
+            group chat without an @mention, so describe that access to
+            installers. Download the package and install it in the target team
+            or group chat.
           </li>
         </ol>
         <div className="flex flex-wrap gap-2">
@@ -810,14 +835,19 @@ settings:
               <strong>Group chat</strong> scopes plus file support. Under{" "}
               <strong>Configure · Permissions</strong>, add the two RSC{" "}
               <strong>Application</strong> permissions shown below. Complete the
-              required app details and icons, then download the app package.
+              required app details and icons, explain that the app can receive
+              every message in an installed team or group chat, then download
+              the app package.
             </li>
             <li>
               <strong>Microsoft Teams · Apps · Manage your apps</strong>: select{" "}
               <strong>Upload an app · Upload a custom app</strong>, choose the
-              downloaded package, and install it in each intended personal,
-              group-chat, or team scope. If upload is unavailable, a Teams
-              administrator must enable or approve custom apps.
+              downloaded package, and install it in each intended personal chat,
+              group chat, or team. One team install covers its standard
+              channels. Private and shared channels require a separate app
+              installation and are not supported by this release. If upload is
+              unavailable, a Teams administrator must enable or approve custom
+              apps.
             </li>
           </ol>
         </section>
@@ -858,6 +888,13 @@ settings:
           permissions with the same Entra Application ID. Its nonempty resource
           is an RSC placeholder; you do not need to register an Entra
           Application ID URI or add delegated Microsoft Graph permissions.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          The two application RSC permissions let the bot receive every message,
+          without an @mention, in each team or group chat where it is installed.
+          Paperclip retains and acts only on messages admitted by your Paperclip
+          reach and access rules. Make this provider access clear in the app
+          description shown to installers.
         </p>
         <p className="text-sm text-muted-foreground">
           This release supports personal chats, group chats, and standard team

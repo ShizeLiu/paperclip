@@ -271,3 +271,103 @@ No provider is promoted to production-qualified by this checkpoint. The signed
 GitHub ping and real invalid-token error path are useful live evidence, but all
 five channels still need fresh completed, provider-visible conversations on the
 persistent fixture once the remaining credential and tenant gates are resolved.
+
+### Follow-on Slack credential exposure — 2026-09-07 UTC
+
+- A fresh signed-in Slack App management session made the existing Signing
+  Secret reveal control respond. The agent copied that value in memory without
+  printing it, but did not submit it to Paperclip.
+- Navigating to OAuth & Permissions briefly showed a provider load error. The
+  agent then requested a full diagnostic DOM snapshot; before it ran, the page
+  finished loading and exposed the Bot User OAuth Token in tool output. This is
+  an agent qualification-procedure failure, not a Paperclip logger regression.
+- No Slack credential was submitted to the isolated Paperclip instance. The
+  copied signing-secret variable was cleared. The bot token shown in that
+  snapshot must be revoked and replaced before further use. Do not treat local
+  log cleanup or hiding the provider field as revocation.
+- The runbook now forbids full snapshots, whole-page text, and screenshots on
+  secret-bearing provider surfaces even during loading/error states. Only
+  explicit nonsecret labels and control metadata may be inspected there; secret
+  entry remains an operator handoff into Paperclip's masked controls.
+- The operator can revoke the affected `maya-paperclip` OAuth token and repeat
+  the provider installation flow to obtain a replacement. Revocation can remove
+  the bot's channel memberships, so the authorized test channel must be checked
+  and the bot reinvited afterward. See Slack's
+  [token-revocation contract](https://docs.slack.dev/reference/methods/auth.revoke).
+
+### Parallel hardening and operator handoff — 2026-09-07 UTC
+
+- Slack now declares the native agent surface, `assistant:write`, and
+  `agent_session_stopped`. Session indicators have a durable, idempotent retry
+  lane independent of message delivery. A delayed status retry recomputes the
+  current published state and cannot revive a cancelled run's working status.
+  Revision, owner, and selected-row fences prevent stale workers from changing
+  a newer result. Working indicators refresh before Slack's one-hour timeout.
+- Native Slack Stop is authenticated and durably recorded before webhook
+  acknowledgement. It binds the original conversation generation and exact
+  run or queued wake, rechecks the linked user's current authority and reach,
+  and uses provider event time to exclude later work. Cancellation receipts
+  must reflect the authoritative run outcome, including a run that finished
+  before cancellation won the race.
+- Discord Gateway component acknowledgement now follows durable Paperclip
+  admission. Denied actions are durably audited without a success ACK, and
+  admission retries respect Discord's response deadline. Partial message edits
+  retry their fetch through the same classified provider retry path.
+- Teams no longer caches user/activity metadata or performs member/Graph
+  lookups before Paperclip admission. Accepted metadata writes are awaited;
+  foreign, missing, conflicting-tenant, and targeted activities fail closed.
+  Setup corrects `groupChat`, exposes implemented mobile commands, and explains
+  that the requested RSC grants deliver every message in an installed team or
+  group chat, while Paperclip's own admission rules constrain retention/work.
+- Browser access was initially blocked by the locked Mac and later recovered.
+  Safe GitHub App inspection still showed two generated-key records dated
+  `2026-09-07T01:26:23Z` and `2026-09-07T01:28:06Z`. A filename-only Downloads
+  check found no PEM for `paperclip-maya-e2e-0906`; no key contents were read.
+  GitHub stores only the public portion, so a missing private-key download
+  cannot be reconstructed from that page. No extra key was generated or deleted
+  during this inspection.
+- The operator reported adding Paperclip Maya E2E to Discord. The in-app
+  channel check redirected to an expired Eigenjoy login, so server membership
+  is operator-reported, not independently verified. Paperclip's resumed Discord
+  form has Application ID `1546330979860221952` and Clawd server ID
+  `1457808928258658549` filled in; the bot-token password field remains empty.
+  The operator must enter the token in that masked field, never in this report
+  or the conversation. Server installation alone does not configure Paperclip.
+
+This remains hardening plus partial setup evidence, not a live round-trip
+qualification. Fresh provider-visible conversations are still required.
+
+#### Verified parallel checkpoint
+
+- Full chat integration: **249/249 passed**, no skips, on the fresh migrated
+  database `chat_adapters_test_20260907_parallel_final`. This includes the
+  exact queued-wakeup-to-run Stop race, late-event and guest denial, status
+  retry/restart/stale-worker fencing, unsupported/permanent-error termination,
+  GitHub and Discord question continuations, Discord FIFO, and Teams denied
+  callback metadata boundaries.
+- Focused helper, runtime, adapter, publication, OpenAPI, UI contract, and shared
+  catalog tests: **159/159 passed**, no skips.
+- Deterministic browser flows: **5/5 passed** on the final source tree. An
+  earlier isolated server boot timed out; the subsequent complete run passed
+  in 27.1 seconds. These tests mock provider interactions, not live accounts.
+- Shared/server/UI TypeScript checks, UI production build, token gates (949
+  files), and `git diff --check` passed. Existing UI bundle-size and mixed-import
+  warnings remain. The broad workspace test suite was not rerun or claimed
+  green; its previously recorded unrelated failures remain outside this proof.
+- Final fetch confirmed `origin/master` at `856813ba3` is already an ancestor
+  of the working branch. No rebase was necessary, no other worktree was used,
+  no PR was changed, and `pnpm-lock.yaml` remains untouched.
+- Unsupported Slack session status now settles until new conversation activity
+  restages it, rather than polling completed threads forever. Definite
+  permission/destination failures are separately visible in Activity and do
+  not resend message content.
+- Teams reaction/action/modal metadata recording was moved behind the actual
+  authorization boundary. The regression checks both rejected callbacks with
+  a valid route and accepted callbacks with the same route. Admitted lifecycle
+  changes retain regional reply-route refresh without retaining user metadata.
+
+The operator-reported Discord install still requires a bot token entered into
+Paperclip and a restored Eigenjoy browser session for live provider proof.
+GitHub still needs its private PEM; Slack and Telegram need the previously
+documented exposed tokens rotated; Teams needs an eligible tenant/admin setup.
+None of these gates is represented as a successful live conversation.

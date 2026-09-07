@@ -91,6 +91,8 @@ export function safeMilestoneText(input: {
   if (input.milestone === "working") return `${input.agentName} is working…`;
   if (input.milestone === "completed")
     return `${input.agentName} completed this turn.`;
+  if (input.errorCode === "slack_session_stopped")
+    return `${input.agentName} stopped at your request.`;
   let taskUrl: string | null = null;
   if (input.publicBaseUrl) {
     try {

@@ -334,18 +334,26 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        userId: user.id,
        channelId
      });
-@@ -1325,8 +1394,11 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1325,8 +1394,18 @@ var DiscordAdapter = class _DiscordAdapter {
      }
      if (interaction.isMessageComponent()) {
-       await interaction.deferUpdate();
+-      await interaction.deferUpdate();
 -      this.handleComponentInteraction(
 -        this.normalizeGatewayComponentInteraction(interaction)
-+      await this.processGatewayWithRetry(
++      // Discord allows three seconds for the initial response. Reserve 500ms
++      // for deferUpdate, and never start a retry that cannot finish in time.
++      // A late successful callback is already durable and idempotent; its
++      // resolution publication updates the card even though this click is not
++      // misleadingly acknowledged after the provider deadline.
++      const acknowledgementStartedAt = Date.now();
++      const admitted = await this.processGatewayWithRetry(
 +        () => this.handleComponentInteraction(
 +          this.normalizeGatewayComponentInteraction(interaction)
 +        ),
-+        { event: "interaction", messageId: interaction.message.id }
++        { event: "interaction", messageId: interaction.message.id },
++        { deadlineAt: acknowledgementStartedAt + 2500 }
        );
++      if (admitted) await interaction.deferUpdate();
      }
    }
 @@ -1340,7 +1412,7 @@ var DiscordAdapter = class _DiscordAdapter {
@@ -821,7 +829,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
            isMe: message.author.id === client.user?.id
          });
          return;
-@@ -2498,11 +2701,36 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2498,11 +2701,41 @@ var DiscordAdapter = class _DiscordAdapter {
          isUserMentioned,
          isRoleMentioned,
          isEveryoneMentioned,
@@ -837,11 +845,16 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
 +        return;
 +      }
 +      try {
-+        const message = nextMessage.partial ? await nextMessage.fetch() : nextMessage;
-+        if (message.author.bot) return;
-+        await this.handleGatewayMessageUpdated(
-+          message,
-+          previousMessage.partial ? void 0 : previousMessage
++        await this.processGatewayWithRetry(
++          async () => {
++            const message = nextMessage.partial ? await nextMessage.fetch() : nextMessage;
++            if (message.author.bot) return;
++            await this.handleGatewayMessageUpdated(
++              message,
++              previousMessage.partial ? void 0 : previousMessage
++            );
++          },
++          { event: "message_update_fetch", messageId: nextMessage.id }
 +        );
 +      } catch (error) {
 +        this.logger.error("Error handling Gateway message update", {
@@ -1112,7 +1125,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
          content: message.content,
          author: {
            id: message.author.id,
-@@ -2696,14 +2981,76 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2696,14 +2981,95 @@ var DiscordAdapter = class _DiscordAdapter {
        // Add isMention flag for the chat handlers
        isMention: isMentioned
      });
@@ -1161,17 +1174,36 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
 +      { event: "message_delete", messageId: message.id }
 +    );
 +  }
-+  async processGatewayWithRetry(operation, context) {
++  async processGatewayWithRetry(operation, context, options = {}) {
 +    const attempts = 3;
 +    let nextDelayMs = 0;
 +    for (let attempt = 0; attempt < attempts; attempt += 1) {
 +      if (nextDelayMs) {
++        if (options.deadlineAt !== void 0 && Date.now() + nextDelayMs >= options.deadlineAt) {
++          this.logger.warn("Discord Gateway event retry would exceed provider acknowledgement deadline", {
++            ...context,
++            attempt: attempt + 1,
++            retryAfterMs: nextDelayMs
++          });
++          return false;
++        }
 +        await new Promise((resolve) => setTimeout(resolve, nextDelayMs));
 +      }
 +      try {
 +        await operation();
++        if (options.deadlineAt !== void 0 && Date.now() >= options.deadlineAt) {
++          this.logger.warn("Discord Gateway event completed after provider acknowledgement deadline", {
++            ...context,
++            attempt: attempt + 1
++          });
++          return false;
++        }
 +        return true;
 +      } catch (error) {
++        if (error && typeof error === "object" && "code" in error && error.code === "chat_discord_gateway_action_rejected") {
++          this.logger.info("Discord Gateway action was not acknowledged after Paperclip rejected it", context);
++          return false;
++        }
 +        if (attempt + 1 < attempts) {
 +          const retryAfter = error && typeof error === "object" && "retryAfter" in error && typeof error.retryAfter === "number" && Number.isFinite(error.retryAfter) && error.retryAfter > 0 ? error.retryAfter : void 0;
 +          const retryAfterHeader = error && typeof error === "object" && "response" in error && error.response && typeof error.response === "object" && "headers" in error.response && error.response.headers instanceof Headers ? Number(error.response.headers.get("retry-after")) : NaN;

@@ -351,7 +351,7 @@ const apps = [
         field("clientSecret", "Client secret", "Paste the client-secret value"),
       ],
       ["team", "channel", "chat"],
-      "Use a Microsoft 365 work or school organization where you can register an Entra app, create a single-tenant Azure Bot, and upload or install a Teams app. Personal or free Teams accounts at teams.live.com cannot complete this setup. Enable personal, team, and groupchat bot scopes and the ChannelMessage.Read.Group and ChatMessage.Read.Chat resource-specific permissions. Install the app in each standard channel or chat where it may work.",
+      "Use a Microsoft 365 work or school organization where you can register an Entra app, create a single-tenant Azure Bot, and upload or install a Teams app. Personal or free Teams accounts at teams.live.com cannot complete this setup. Enable personal, team, and groupChat bot scopes and the ChannelMessage.Read.Group and ChatMessage.Read.Chat resource-specific application permissions. Those RSC grants let an installed app receive every message in a team or group chat without an @mention, so explain that access to installers. One team install covers its standard channels; private and shared channels require a separate installation and are not supported by this release.",
       {
         register: "https://dev.teams.microsoft.com/apps",
         docs: "https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/create-a-bot-for-teams",

@@ -5,6 +5,7 @@ import {
   createChatSdkEndpointRuntime,
   scopeMicrosoftTeamsEgress,
 } from "./chat-sdk-runtime.js";
+import type { ChatSdkRuntimeCallbacks } from "./chat-sdk-runtime.js";
 import type {
   ChatSdkStatePersistence,
   ChatSdkStateRecord,
@@ -72,6 +73,29 @@ function memoryPersistence(): ChatSdkStatePersistence {
       return rows.get(keyFor({ ...scope, key })) ?? null;
     },
   };
+}
+
+function signedSlackEventRequest(
+  signingSecret: string,
+  payload: Record<string, unknown>,
+): Request {
+  const body = JSON.stringify(payload);
+  const timestamp = String(Math.floor(Date.now() / 1_000));
+  const signature = `v0=${createHmac("sha256", signingSecret)
+    .update(`v0:${timestamp}:${body}`)
+    .digest("hex")}`;
+  return new Request(
+    "https://paperclip.example/api/chat-webhooks/public/slack",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": timestamp,
+        "x-slack-signature": signature,
+      },
+      body,
+    },
+  );
 }
 
 describe("Chat SDK published adapter integration", () => {
@@ -563,6 +587,329 @@ describe("Chat SDK published adapter integration", () => {
               fullName: "operator",
             }),
           }),
+        }),
+      );
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("parses signed Slack message edits and deletes through the pinned adapter", async () => {
+    const signingSecret = "slack-lifecycle-signing-secret";
+    const onMessageUpdated = vi.fn(async () => undefined);
+    const onMessageDeleted = vi.fn(async () => undefined);
+    const runtime = createChatSdkEndpointRuntime({
+      callbacks: {
+        onMessage() {},
+        onMessageDeleted,
+        onMessageUpdated,
+      },
+      companyId: "company-slack-lifecycle-envelope",
+      endpointId: "endpoint-slack-lifecycle-envelope",
+      logger: "silent",
+      persistence,
+      providerConfig: {
+        provider: "slack",
+        userName: "paperclip-agent",
+        credentials: {
+          botToken: "xoxb-test",
+          botUserId: "U-PAPERCLIP-BOT",
+          signingSecret,
+        },
+      },
+    });
+    try {
+      await runtime.initialize();
+      const adapter = runtime.getProviderAdapter() as unknown as {
+        _client: {
+          users: {
+            info(input: unknown): Promise<unknown>;
+          };
+        };
+      };
+      adapter._client.users.info = vi.fn(async () => ({
+        ok: true,
+        user: {
+          id: "U-OPERATOR",
+          name: "operator",
+          real_name: "Operator",
+          is_bot: false,
+          profile: { display_name: "operator", real_name: "Operator" },
+        },
+      }));
+      const previousMessage = {
+        type: "message",
+        user: "U-OPERATOR",
+        text: "@paperclip-agent original request",
+        ts: "1788.500",
+        thread_ts: "1788.400",
+      };
+
+      const edited = await runtime.handleWebhook(
+        signedSlackEventRequest(signingSecret, {
+          type: "event_callback",
+          team_id: "T-PAPERCLIP",
+          event_id: "Ev-slack-edit",
+          event: {
+            type: "message",
+            subtype: "message_changed",
+            channel: "C-PAPERCLIP",
+            channel_type: "channel",
+            event_ts: "1788.600",
+            message: {
+              ...previousMessage,
+              text: "@paperclip-agent corrected request",
+              edited: { user: "U-OPERATOR", ts: "1788.600" },
+            },
+            previous_message: previousMessage,
+          },
+        }),
+      );
+      expect(edited.status).toBe(200);
+      expect(onMessageUpdated).toHaveBeenCalledOnce();
+      expect(onMessageUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpointId: "endpoint-slack-lifecycle-envelope",
+          provider: "slack",
+          thread: expect.objectContaining({
+            id: "slack:C-PAPERCLIP:1788.400",
+          }),
+          message: expect.objectContaining({
+            id: "1788.500",
+            text: expect.stringContaining("corrected request"),
+          }),
+          previousMessage: expect.objectContaining({
+            id: "1788.500",
+            text: expect.stringContaining("original request"),
+          }),
+        }),
+      );
+
+      const deleted = await runtime.handleWebhook(
+        signedSlackEventRequest(signingSecret, {
+          type: "event_callback",
+          team_id: "T-PAPERCLIP",
+          event_id: "Ev-slack-delete",
+          event: {
+            type: "message",
+            subtype: "message_deleted",
+            channel: "C-PAPERCLIP",
+            channel_type: "channel",
+            deleted_ts: "1788.500",
+            event_ts: "1788.700",
+            previous_message: previousMessage,
+          },
+        }),
+      );
+      expect(deleted.status).toBe(200);
+      expect(onMessageDeleted).toHaveBeenCalledOnce();
+      expect(onMessageDeleted).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpointId: "endpoint-slack-lifecycle-envelope",
+          provider: "slack",
+          event: expect.objectContaining({
+            channelId: "C-PAPERCLIP",
+            messageId: "1788.500",
+            threadId: "slack:C-PAPERCLIP:1788.400",
+          }),
+        }),
+      );
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("parses signed Slack reaction add and remove events through the pinned adapter", async () => {
+    const signingSecret = "slack-reaction-signing-secret";
+    const onReaction = vi.fn<
+      NonNullable<ChatSdkRuntimeCallbacks["onReaction"]>
+    >(async () => undefined);
+    const runtime = createChatSdkEndpointRuntime({
+      callbacks: { onMessage() {}, onReaction },
+      companyId: "company-slack-reaction-envelope",
+      endpointId: "endpoint-slack-reaction-envelope",
+      logger: "silent",
+      persistence,
+      providerConfig: {
+        provider: "slack",
+        userName: "paperclip-agent",
+        credentials: {
+          botToken: "xoxb-test",
+          botUserId: "U-PAPERCLIP-BOT",
+          signingSecret,
+        },
+      },
+    });
+    try {
+      await runtime.initialize();
+      const adapter = runtime.getProviderAdapter() as unknown as {
+        _client: {
+          conversations: {
+            replies(input: unknown): Promise<unknown>;
+          };
+          users: {
+            info(input: unknown): Promise<unknown>;
+          };
+        };
+      };
+      adapter._client.conversations.replies = vi.fn(async () => ({
+        ok: true,
+        messages: [{ ts: "1788.500", thread_ts: "1788.400" }],
+      }));
+      adapter._client.users.info = vi.fn(async () => ({
+        ok: true,
+        user: {
+          id: "U-OPERATOR",
+          name: "operator",
+          real_name: "Operator",
+          is_bot: false,
+          profile: { display_name: "operator", real_name: "Operator" },
+        },
+      }));
+
+      for (const [type, eventTs] of [
+        ["reaction_added", "1788.800"],
+        ["reaction_removed", "1788.900"],
+      ] as const) {
+        const response = await runtime.handleWebhook(
+          signedSlackEventRequest(signingSecret, {
+            type: "event_callback",
+            team_id: "T-PAPERCLIP",
+            event_id: `Ev-slack-${type}`,
+            event: {
+              type,
+              user: "U-OPERATOR",
+              reaction: "eyes",
+              item: {
+                type: "message",
+                channel: "C-PAPERCLIP",
+                ts: "1788.500",
+              },
+              event_ts: eventTs,
+            },
+          }),
+        );
+        expect(response.status).toBe(200);
+      }
+      expect(onReaction).toHaveBeenCalledTimes(2);
+      expect(onReaction.mock.calls.map(([callback]) => callback)).toEqual([
+        expect.objectContaining({
+          endpointId: "endpoint-slack-reaction-envelope",
+          provider: "slack",
+          event: expect.objectContaining({
+            added: true,
+            messageId: "1788.500",
+            rawEmoji: "eyes",
+            threadId: "slack:C-PAPERCLIP:1788.400",
+          }),
+        }),
+        expect.objectContaining({
+          endpointId: "endpoint-slack-reaction-envelope",
+          provider: "slack",
+          event: expect.objectContaining({
+            added: false,
+            messageId: "1788.500",
+            rawEmoji: "eyes",
+            threadId: "slack:C-PAPERCLIP:1788.400",
+          }),
+        }),
+      ]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("falls back from unavailable Slack native streaming to bounded post and edit", async () => {
+    const runtime = createChatSdkEndpointRuntime({
+      callbacks: { onMessage() {} },
+      companyId: "company-slack-stream-fallback",
+      endpointId: "endpoint-slack-stream-fallback",
+      logger: "silent",
+      persistence,
+      providerConfig: {
+        provider: "slack",
+        userName: "paperclip-agent",
+        credentials: {
+          botToken: "xoxb-test",
+          botUserId: "U-PAPERCLIP-BOT",
+          signingSecret: "slack-stream-signing-secret",
+        },
+      },
+    });
+    try {
+      await runtime.initialize();
+      const nativeAppend = vi.fn(async () => {
+        throw Object.assign(new Error("native streaming unavailable"), {
+          code: "slack_webapi_platform_error",
+          data: { error: "unknown_method" },
+        });
+      });
+      const nativeStop = vi.fn(async () => ({ ok: true, ts: "1788.999" }));
+      const chatStream = vi.fn(() => ({
+        append: nativeAppend,
+        stop: nativeStop,
+      }));
+      const postMessage = vi.fn(async () => ({
+        ok: true,
+        channel: "D-PAPERCLIP",
+        ts: "1788.901",
+      }));
+      const update = vi.fn(async () => ({
+        ok: true,
+        channel: "D-PAPERCLIP",
+        ts: "1788.901",
+      }));
+      const adapter = runtime.getProviderAdapter() as unknown as {
+        _client: {
+          chat: {
+            postMessage: typeof postMessage;
+            update: typeof update;
+          };
+          chatStream: typeof chatStream;
+        };
+        endTyping(threadId: string): Promise<void>;
+        stream(
+          threadId: string,
+          chunks: AsyncIterable<string>,
+          options: {
+            recipientTeamId: string;
+            recipientUserId: string;
+            updateIntervalMs: number;
+          },
+        ): Promise<{ id: string } | null>;
+      };
+      adapter._client.chatStream = chatStream;
+      adapter._client.chat.postMessage = postMessage;
+      adapter._client.chat.update = update;
+      adapter.endTyping = vi.fn(async () => undefined);
+      const chunks = async function* () {
+        yield "First safe paragraph.\n\n";
+        yield "Second safe paragraph.";
+      };
+
+      const sent = await adapter.stream(
+        "slack:D-PAPERCLIP:1788.400",
+        chunks(),
+        {
+          recipientTeamId: "T-PAPERCLIP",
+          recipientUserId: "U-OPERATOR",
+          updateIntervalMs: 0,
+        },
+      );
+
+      expect(sent?.id).toBe("1788.901");
+      expect(chatStream).toHaveBeenCalledOnce();
+      expect(nativeAppend).toHaveBeenCalledOnce();
+      expect(nativeStop).not.toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledOnce();
+      expect(update).toHaveBeenCalledOnce();
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "First safe paragraph.\n\n" }),
+      );
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "First safe paragraph.\n\nSecond safe paragraph.",
+          ts: "1788.901",
         }),
       );
     } finally {
@@ -1218,6 +1565,7 @@ describe("Chat SDK published adapter integration", () => {
         provider: "github" as const,
         userName: "paperclip-agent[bot]",
         credentials: {
+          botUserId: 1,
           token: "github_pat_test",
           webhookSecret: "github-webhook-secret",
         },
@@ -1271,6 +1619,22 @@ describe("Chat SDK published adapter integration", () => {
   ])(
     "rejects an unauthenticated $provider webhook before dispatch",
     async ({ providerConfig, request }) => {
+      const providerFetch = vi.fn(async (input: string | URL | Request) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (providerConfig.provider === "telegram" && url.endsWith("/getMe")) {
+          return Response.json({
+            ok: true,
+            result: {
+              id: 123,
+              is_bot: true,
+              first_name: "Paperclip Agent",
+              username: "paperclip_agent_bot",
+            },
+          });
+        }
+        throw new Error(`Unexpected provider request: ${url}`);
+      });
+      vi.stubGlobal("fetch", providerFetch);
       const runtime = createChatSdkEndpointRuntime({
         callbacks: { onMessage() {} },
         companyId: "company-signature-test",
@@ -1279,9 +1643,14 @@ describe("Chat SDK published adapter integration", () => {
         persistence,
         providerConfig,
       });
-      const response = await runtime.handleWebhook(request);
-      expect(response.status).toBeGreaterThanOrEqual(400);
-      expect(response.status).toBeLessThan(500);
+      try {
+        const response = await runtime.handleWebhook(request);
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(response.status).toBeLessThan(500);
+      } finally {
+        await runtime.shutdown();
+        vi.unstubAllGlobals();
+      }
     },
   );
 
@@ -1765,6 +2134,115 @@ describe("Chat SDK published adapter integration", () => {
     await adapter.postMessage(canonicalThreadId, { markdown: "canonical row" });
 
     expect(observedServiceUrls).toEqual([currentServiceUrl, currentServiceUrl]);
+    await runtime.shutdown();
+  });
+
+  it("persists Teams metadata only after Paperclip admits the authenticated activity", async () => {
+    const state = memoryPersistence();
+    const tenantId = "00000000-0000-4000-8000-000000000622";
+    const appId = "00000000-0000-4000-8000-000000000611";
+    const runtime = createChatSdkEndpointRuntime({
+      callbacks: { onMessage() {} },
+      companyId: "company-teams-admitted-metadata",
+      endpointId: "endpoint-teams-admitted-metadata",
+      logger: "silent",
+      persistence: state,
+      providerConfig: {
+        provider: "microsoft-teams",
+        userName: "Paperclip Agent",
+        credentials: {
+          appId,
+          appPassword: "secret",
+          appTenantId: tenantId,
+          appType: "SingleTenant",
+        },
+      },
+    });
+    await runtime.handleWebhook(
+      new Request("https://paperclip.test/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "message", text: "initialize" }),
+      }),
+    );
+    const adapter = runtime.getProviderAdapter() as unknown as {
+      cacheUserContext(activity: unknown): void;
+      chat: {
+        getState(): {
+          get<T = unknown>(key: string): Promise<T | null>;
+        };
+      };
+      getIncomingUser(...args: unknown[]): Promise<unknown>;
+      getUser(...args: unknown[]): Promise<unknown>;
+    };
+    const userId = "29:admitted-teams-user";
+    const aadObjectId = "00000000-0000-4000-8000-000000000633";
+    const conversationId =
+      "19:admitted-channel@thread.tacv2;messageid=admitted-root";
+    const baseConversationId = "19:admitted-channel@thread.tacv2";
+    const serviceUrl = "https://smba.trafficmanager.net/amer/";
+    const raw = {
+      type: "message",
+      serviceUrl,
+      from: { id: userId, aadObjectId, name: "Admitted Teams User" },
+      conversation: {
+        id: conversationId,
+        conversationType: "channel",
+        tenantId,
+      },
+      channelData: {
+        tenant: { id: tenantId },
+        team: { aadGroupId: "admitted-team-aad-id" },
+        channel: { id: baseConversationId },
+      },
+    };
+    const sdkState = adapter.chat.getState();
+
+    adapter.cacheUserContext(raw);
+    expect(await adapter.getIncomingUser({}, userId, aadObjectId)).toBeNull();
+    expect(await adapter.getUser(userId)).toBeNull();
+    expect(await sdkState.get(`teams:serviceUrl:${userId}`)).toBeNull();
+    expect(await sdkState.get(`teams:aadObjectId:${userId}`)).toBeNull();
+    expect(await sdkState.get(`teams:tenantId:${userId}`)).toBeNull();
+    expect(
+      await sdkState.get(`teams:channelContext:${baseConversationId}`),
+    ).toBeNull();
+
+    expect(runtime.acceptsProviderScope(raw)).toBe(true);
+    expect(
+      runtime.acceptsProviderScope({
+        ...raw,
+        recipient: { id: appId, isTargeted: true },
+      }),
+    ).toBe(false);
+    expect(
+      runtime.acceptsProviderScope({
+        ...raw,
+        conversation: {
+          ...raw.conversation,
+          tenantId: "00000000-0000-4000-8000-000000000699",
+        },
+      }),
+    ).toBe(false);
+
+    const threadId = `teams:${Buffer.from(conversationId).toString("base64url")}`;
+    await runtime.recordMicrosoftTeamsRoute(threadId, serviceUrl, raw);
+
+    expect(await sdkState.get(`teams:serviceUrl:${userId}`)).toBe(
+      "https://smba.trafficmanager.net/amer",
+    );
+    expect(await sdkState.get(`teams:aadObjectId:${userId}`)).toBe(aadObjectId);
+    expect(await sdkState.get(`teams:tenantId:${userId}`)).toBe(tenantId);
+    expect(
+      JSON.parse(
+        String(
+          await sdkState.get(`teams:channelContext:${baseConversationId}`),
+        ),
+      ),
+    ).toEqual({
+      teamId: "admitted-team-aad-id",
+      channelId: baseConversationId,
+    });
     await runtime.shutdown();
   });
 

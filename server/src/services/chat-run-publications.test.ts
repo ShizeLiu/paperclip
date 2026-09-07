@@ -52,6 +52,17 @@ describe("chat run milestone projection", () => {
     );
   });
 
+  it("confirms an explicit Slack Stop without claiming an unexpected failure", () => {
+    expect(
+      safeMilestoneText({
+        agentName: "Maya",
+        errorCode: "slack_session_stopped",
+        milestone: "failed",
+        issueId: "issue-1",
+      }),
+    ).toBe("Maya stopped at your request.");
+  });
+
   it("projects a successful run without an explicit reply as a generic completion", () => {
     expect(
       safeMilestoneText({

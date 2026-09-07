@@ -99,7 +99,11 @@ vi.mock("@chat-adapter/teams", () => ({
       app: {
         api: new MockTeamsApi("https://smba.trafficmanager.net/teams"),
       },
+      cacheUserContext: () => undefined,
+      getIncomingUser: async () => null,
+      getUser: async () => null,
       decodeThreadId: () => ({
+        conversationId: "teams-mock-conversation",
         serviceUrl: "https://smba.trafficmanager.net/teams",
       }),
       openDM: async () => "teams:mock:thread",

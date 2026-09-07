@@ -520,6 +520,8 @@ describe("openapi routes", () => {
       "slash_task_start",
       "provider_effect",
       "github_webhook_ingress",
+      "slack_session_sync",
+      "slack_session_stop",
     ]);
 
     const replaceResources =

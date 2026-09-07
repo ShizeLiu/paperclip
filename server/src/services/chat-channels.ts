@@ -48,6 +48,7 @@ import {
   companies,
   companyMemberships,
   companySecretBindings,
+  heartbeatRuns,
   issueComments,
   issueAttachments,
   issueThreadInteractions,
@@ -128,6 +129,16 @@ import {
   verifyDiscordBot,
 } from "./chat-discord.js";
 import {
+  parseSlackSessionStop,
+  setSlackSessionStatus,
+  slackSessionStatusForPublication,
+  type SlackSessionStop,
+} from "./chat-slack-sessions.js";
+import {
+  slackSessionSyncPayload,
+  stageSlackSessionSync,
+} from "./chat-slack-session-outbox.js";
+import {
   parseChatProviderLifecycle,
   type ChatProviderLifecycleEffect,
 } from "./chat-provider-lifecycle.js";
@@ -140,6 +151,10 @@ import {
 } from "./chat-interaction-publications.js";
 import { chatProviderConversationUrl } from "./chat-provider-links.js";
 import { classifyChatPublicationError } from "./chat-publication-errors.js";
+import {
+  enqueueChatRunMilestones,
+  safeMilestoneText,
+} from "./chat-run-publications.js";
 import {
   normalizeMicrosoftTeamsCredentialIds,
   normalizeMicrosoftTeamsExternalPrincipalId,
@@ -475,6 +490,7 @@ const REQUIRED_CREDENTIALS: Record<
 
 const REQUIRED_SLACK_BOT_SCOPES = [
   "app_mentions:read",
+  "assistant:write",
   "channels:history",
   "channels:read",
   "chat:write",
@@ -879,13 +895,25 @@ export interface ChatChannelServiceOptions {
     token: string;
   }) => Promise<boolean>;
   fetch?: typeof globalThis.fetch;
-  heartbeat: IssueAssignmentWakeupDeps;
+  heartbeat: IssueAssignmentWakeupDeps & {
+    cancelRun?: (
+      runId: string,
+      reason?: string,
+      options?: {
+        errorCode?: string;
+        eventMessage?: string;
+        eventPayload?: Record<string, unknown>;
+      },
+    ) => Promise<unknown>;
+  };
   /** Production bridge for resuming a native run that owns the question. */
   resolveNativeQuestion?: QuestionResponseDeliveryServiceOptions["resolveNativeQuestion"];
   publicBaseUrl?: string | null;
   runtime?: ChatSdkRuntime;
   /** Testable scheduler hook; production defaults to the next event-loop turn. */
   scheduleDeferredWork?: (task: () => void) => void;
+  /** Test boundary after selecting due Slack status work and before claiming. */
+  slackSessionSyncSelectionBarrier?: () => Promise<void>;
   /** Narrow fault-injection boundary for the one-time setup-secret audit. */
   setupSecretActivityLogger?: typeof logActivity;
   /** Testable barrier after fail-closed state and before secret-ref mutation. */
@@ -1239,6 +1267,74 @@ type SlackSlashTaskRecoveryPayload = {
   syntheticMessageId: string;
   taskText: string;
 };
+
+type SlackSessionStopTarget =
+  { id: string; kind: "run" } | { id: string; kind: "wakeup" };
+
+type SlackSessionStopPayload = {
+  version: 1;
+  assignedAgentId: string;
+  eventTimestamp: string;
+  issueId: string | null;
+  occurredAt: string;
+  sessionGeneration: number | null;
+  target: SlackSessionStopTarget | null;
+  threadId: string;
+  userId: string;
+};
+
+function slackSessionStopPayload(
+  value: Record<string, unknown>,
+): SlackSessionStopPayload | null {
+  const target = value.target;
+  const parsedTarget =
+    target === null
+      ? null
+      : target &&
+          typeof target === "object" &&
+          !Array.isArray(target) &&
+          ((target as { kind?: unknown }).kind === "run" ||
+            (target as { kind?: unknown }).kind === "wakeup") &&
+          typeof (target as { id?: unknown }).id === "string" &&
+          isUuidLike((target as { id: string }).id)
+        ? (target as SlackSessionStopTarget)
+        : undefined;
+  if (
+    value.version !== 1 ||
+    typeof value.assignedAgentId !== "string" ||
+    !isUuidLike(value.assignedAgentId) ||
+    typeof value.eventTimestamp !== "string" ||
+    !value.eventTimestamp ||
+    (value.issueId !== null &&
+      (typeof value.issueId !== "string" || !isUuidLike(value.issueId))) ||
+    typeof value.occurredAt !== "string" ||
+    !Number.isFinite(new Date(value.occurredAt).getTime()) ||
+    (value.sessionGeneration !== null &&
+      (typeof value.sessionGeneration !== "number" ||
+        !Number.isSafeInteger(value.sessionGeneration) ||
+        value.sessionGeneration < 1)) ||
+    (parsedTarget !== null &&
+      (value.issueId === null || value.sessionGeneration === null)) ||
+    parsedTarget === undefined ||
+    typeof value.threadId !== "string" ||
+    !value.threadId.startsWith("slack:") ||
+    typeof value.userId !== "string" ||
+    !value.userId
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    assignedAgentId: value.assignedAgentId,
+    eventTimestamp: value.eventTimestamp,
+    issueId: value.issueId,
+    occurredAt: value.occurredAt,
+    sessionGeneration: value.sessionGeneration,
+    target: parsedTarget,
+    threadId: value.threadId,
+    userId: value.userId,
+  };
+}
 
 function slackSlashTaskRecoveryPayload(
   payload: Record<string, unknown>,
@@ -4211,6 +4307,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     context: InboundRuntimeContext | undefined,
     threadId: string,
     raw: unknown,
+    recordAcceptedActivity = true,
   ): Promise<void> {
     if (endpoint.provider !== "microsoft-teams" || !context?.endpointRuntime) {
       return;
@@ -4228,6 +4325,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       await context.endpointRuntime.recordMicrosoftTeamsRoute(
         threadId,
         serviceUrl,
+        recordAcceptedActivity ? raw : undefined,
       );
     });
   }
@@ -10991,11 +11089,17 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       return existing ? { delivery: existing, endpoint, scheduledAt } : null;
     });
     if (admission) {
+      // Lifecycle callbacks can carry a new regional Bot Connector route. Keep
+      // that provider-authenticated route current even when processing is
+      // deferred, but deliberately omit the raw activity here. Lifecycle
+      // callbacks never populate the adapter's user cache; the admitted root
+      // message already established the principal metadata they must match.
       await recordCurrentMicrosoftTeamsRoute(
         admission.endpoint,
         runtimeContext,
         input.threadId,
         input.raw,
+        false,
       );
     }
     if (
@@ -11635,12 +11739,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     ) {
       return;
     }
-    await recordCurrentMicrosoftTeamsRoute(
-      record.endpoint,
-      runtimeContext,
-      event.event.threadId,
-      event.event.raw,
-    );
     let conversation: ConversationRow | null = await conversationForThread(
       event.endpointId,
       event.event.threadId,
@@ -11732,14 +11830,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       event.event.rawEmoji,
       rawFingerprint,
     ].join(":");
-    await db.transaction(async (tx) => {
+    const admitted = await db.transaction(async (tx) => {
       const currentEndpoint = await runtimeCallbackEndpoint(
         tx,
         event.endpointId,
         runtimeContext,
         ["active"],
       );
-      if (!currentEndpoint) return;
+      if (!currentEndpoint) return false;
       const currentConversation = await tx
         .select()
         .from(chatConversations)
@@ -11758,7 +11856,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         )
         .for("update")
         .then((rows) => rows[0] ?? null);
-      if (!currentConversation) return;
+      if (!currentConversation) return false;
       const currentResource =
         currentConversation.resourceId && !currentConversation.isDirectMessage
           ? await tx
@@ -11780,13 +11878,13 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       const destinationAllowed = currentConversation.isDirectMessage
         ? currentEndpoint.allowDirectMessages
         : nonDirectDestinationAllowed(currentEndpoint, currentResource);
-      if (!destinationAllowed) return;
+      if (!destinationAllowed) return false;
       const authorization = await lockCurrentPrincipalAuthorization(
         tx,
         currentEndpoint,
         principal.principal.id,
       );
-      if (!authorization.allowed) return;
+      if (!authorization.allowed) return false;
       await tx
         .insert(chatDeliveries)
         .values({
@@ -11815,7 +11913,16 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           processedAt: new Date(),
         })
         .onConflictDoNothing();
+      return true;
     });
+    if (admitted) {
+      await recordCurrentMicrosoftTeamsRoute(
+        record.endpoint,
+        runtimeContext,
+        event.event.threadId,
+        event.event.raw,
+      );
+    }
   }
 
   async function denyExternalAction(
@@ -12947,11 +13054,35 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     if (!record) {
       throw forbidden("This chat action is not a current Paperclip question");
     }
-    const deny = (safelyKnown?: {
+    const deny = async (safelyKnown?: {
       conversationId?: string | null;
       principalId?: string | null;
-    }) =>
-      denyExternalAction(record.endpoint, event, runtimeContext, safelyKnown);
+    }) => {
+      await denyExternalAction(
+        record.endpoint,
+        event,
+        runtimeContext,
+        safelyKnown,
+      );
+      const raw = event.event.raw;
+      const isDiscordGatewayComponent =
+        event.provider === "discord" &&
+        raw !== null &&
+        typeof raw === "object" &&
+        "deferUpdate" in raw &&
+        typeof raw.deferUpdate === "function" &&
+        "isMessageComponent" in raw &&
+        typeof raw.isMessageComponent === "function";
+      if (isDiscordGatewayComponent) {
+        // Discord renders deferUpdate as a successful click. After the denial
+        // audit is durable, surface a transport-only sentinel so the Gateway
+        // adapter can deliberately withhold that misleading acknowledgement.
+        throw Object.assign(
+          new Error("Discord Gateway action was not admitted by Paperclip"),
+          { code: "chat_discord_gateway_action_rejected" },
+        );
+      }
+    };
     if (
       record.endpoint.status !== "active" ||
       record.endpoint.provider !== event.provider ||
@@ -12959,12 +13090,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     ) {
       return deny();
     }
-    await recordCurrentMicrosoftTeamsRoute(
-      record.endpoint,
-      runtimeContext,
-      event.event.threadId,
-      event.event.raw,
-    );
     const principal = await ensurePrincipal(
       record.endpoint,
       event.event.user,
@@ -13274,6 +13399,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         completedPayload?.messageId === event.event.messageId &&
         completedPayload?.actionId === event.event.actionId
       ) {
+        await recordCurrentMicrosoftTeamsRoute(
+          record.endpoint,
+          runtimeContext,
+          event.event.threadId,
+          event.event.raw,
+        );
         return;
       }
       return deny(safelyKnown);
@@ -13564,8 +13695,23 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             : { kind: "duplicate" as const };
         });
         if (preflight.kind === "denied") return deny(safelyKnown);
-        if (preflight.kind === "duplicate") return;
+        if (preflight.kind === "duplicate") {
+          await recordCurrentMicrosoftTeamsRoute(
+            record.endpoint,
+            runtimeContext,
+            event.event.threadId,
+            event.event.raw,
+          );
+          return;
+        }
         attemptActionId = preflight.attemptActionId;
+
+        await recordCurrentMicrosoftTeamsRoute(
+          record.endpoint,
+          runtimeContext,
+          event.event.threadId,
+          event.event.raw,
+        );
 
         // A provider modal open can take seconds and can outlive Slack's
         // trigger. The final Paperclip authorization snapshot above commits
@@ -13890,6 +14036,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       }
       throw error;
     }
+    await recordCurrentMicrosoftTeamsRoute(
+      record.endpoint,
+      runtimeContext,
+      event.event.threadId,
+      event.event.raw,
+    );
   }
 
   async function handleModalSubmit(
@@ -13921,14 +14073,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         });
       }
       return chatQuestionFormDenialResponse();
-    }
-    if (event.event.relatedThread) {
-      await recordCurrentMicrosoftTeamsRoute(
-        record.endpoint,
-        runtimeContext,
-        event.event.relatedThread.id,
-        event.event.raw,
-      );
     }
     const deny = async (
       code: string,
@@ -14137,6 +14281,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           loaded.payload,
         );
       }
+      if (event.event.relatedThread) {
+        await recordCurrentMicrosoftTeamsRoute(
+          record.endpoint,
+          runtimeContext,
+          event.event.relatedThread.id,
+          event.event.raw,
+        );
+      }
       return { action: "clear" };
     }
     const interaction = (
@@ -14343,6 +14495,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         await processPendingPublications();
       });
       return { action: "clear" };
+    }
+    if (event.event.relatedThread) {
+      await recordCurrentMicrosoftTeamsRoute(
+        record.endpoint,
+        runtimeContext,
+        event.event.relatedThread.id,
+        event.event.raw,
+      );
     }
     scheduleMessageProcessing(async () => {
       await questionResponses.deliver(answered.id);
@@ -17209,6 +17369,734 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     return actions.length;
   }
 
+  async function stageSlackSessionStop(
+    endpoint: EndpointRow,
+    event: SlackSessionStop,
+    runtimeContext: RuntimeContext,
+  ): Promise<string | null> {
+    return db.transaction(async (tx) => {
+      const currentEndpoint = await runtimeCallbackEndpoint(
+        tx,
+        endpoint.id,
+        runtimeContext,
+        ["active"],
+      );
+      if (!currentEndpoint || currentEndpoint.provider !== "slack") return null;
+
+      const conversation = await tx
+        .select()
+        .from(chatConversations)
+        .where(
+          and(
+            eq(chatConversations.companyId, currentEndpoint.companyId),
+            eq(chatConversations.endpointId, currentEndpoint.id),
+            eq(chatConversations.externalThreadId, event.threadId),
+            inArray(chatConversations.state, ["active", "waiting"]),
+          ),
+        )
+        .orderBy(desc(chatConversations.sessionGeneration))
+        .limit(1)
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      const principal = await tx
+        .select()
+        .from(chatExternalPrincipals)
+        .where(
+          and(
+            eq(chatExternalPrincipals.companyId, currentEndpoint.companyId),
+            eq(chatExternalPrincipals.provider, "slack"),
+            eq(
+              chatExternalPrincipals.providerAccountId,
+              currentEndpoint.providerAccountId ?? "unknown",
+            ),
+            eq(chatExternalPrincipals.externalId, event.userId),
+            eq(chatExternalPrincipals.kind, "user"),
+            eq(chatExternalPrincipals.isBot, false),
+          ),
+        )
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      const issue = conversation
+        ? await tx
+            .select()
+            .from(issues)
+            .where(
+              and(
+                eq(issues.companyId, currentEndpoint.companyId),
+                eq(issues.id, conversation.issueId),
+                eq(issues.assigneeAgentId, currentEndpoint.assignedAgentId),
+              ),
+            )
+            .for("update")
+            .then((rows) => rows[0] ?? null)
+        : null;
+
+      // Slack carries fractional event timestamps. Treat that exact instant as
+      // the cancellation boundary so a run admitted even milliseconds after
+      // Stop was clicked can never be mistaken for the stopped session.
+      const eventCutoff = event.occurredAt;
+      const futureEvent = event.occurredAt.getTime() > Date.now() + 60_000;
+      let target: SlackSessionStopTarget | null = null;
+      if (issue && !futureEvent && issue.executionRunId) {
+        const run = await tx
+          .select({
+            agentId: heartbeatRuns.agentId,
+            companyId: heartbeatRuns.companyId,
+            contextSnapshot: heartbeatRuns.contextSnapshot,
+            createdAt: heartbeatRuns.createdAt,
+            id: heartbeatRuns.id,
+            startedAt: heartbeatRuns.startedAt,
+          })
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.id, issue.executionRunId),
+              eq(heartbeatRuns.companyId, currentEndpoint.companyId),
+              eq(heartbeatRuns.agentId, currentEndpoint.assignedAgentId),
+              inArray(heartbeatRuns.status, [
+                "queued",
+                "running",
+                "scheduled_retry",
+              ]),
+              lte(heartbeatRuns.createdAt, eventCutoff),
+              or(
+                isNull(heartbeatRuns.startedAt),
+                lte(heartbeatRuns.startedAt, eventCutoff),
+              ),
+              or(
+                sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${issue.id}`,
+                sql`${heartbeatRuns.contextSnapshot}->>'taskId' = ${issue.id}`,
+              ),
+            ),
+          )
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (run) target = { id: run.id, kind: "run" };
+      } else if (issue && !futureEvent && !issue.executionRunId) {
+        const wakeup = await tx
+          .select({ id: agentWakeupRequests.id })
+          .from(agentWakeupRequests)
+          .where(
+            and(
+              eq(agentWakeupRequests.companyId, currentEndpoint.companyId),
+              eq(agentWakeupRequests.agentId, currentEndpoint.assignedAgentId),
+              inArray(agentWakeupRequests.status, [
+                "queued",
+                "deferred_issue_execution",
+              ]),
+              isNull(agentWakeupRequests.runId),
+              lte(agentWakeupRequests.requestedAt, eventCutoff),
+              or(
+                sql`${agentWakeupRequests.payload}->>'issueId' = ${issue.id}`,
+                sql`${agentWakeupRequests.payload}->>'taskId' = ${issue.id}`,
+                sql`${agentWakeupRequests.payload}->'_paperclipWakeContext'->>'issueId' = ${issue.id}`,
+                sql`${agentWakeupRequests.payload}->'_paperclipWakeContext'->>'taskId' = ${issue.id}`,
+              ),
+            ),
+          )
+          .orderBy(desc(agentWakeupRequests.requestedAt))
+          .limit(1)
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (wakeup) target = { id: wakeup.id, kind: "wakeup" };
+      }
+
+      const payload: SlackSessionStopPayload = {
+        version: 1,
+        assignedAgentId: currentEndpoint.assignedAgentId,
+        eventTimestamp: event.eventTimestamp,
+        issueId: issue?.id ?? null,
+        occurredAt: event.occurredAt.toISOString(),
+        sessionGeneration: conversation?.sessionGeneration ?? null,
+        target,
+        threadId: event.threadId,
+        userId: event.userId,
+      };
+      const [inserted] = await tx
+        .insert(chatActions)
+        .values({
+          companyId: currentEndpoint.companyId,
+          endpointId: currentEndpoint.id,
+          conversationId: conversation?.id ?? null,
+          principalId: principal?.id ?? null,
+          kind: "slack_session_stop",
+          providerActionId: `slack_session_stop:${event.providerEventId}`,
+          payload,
+          status: "received",
+        })
+        .onConflictDoNothing()
+        .returning({ id: chatActions.id });
+      return (
+        inserted?.id ??
+        (await tx
+          .select({ id: chatActions.id })
+          .from(chatActions)
+          .where(
+            and(
+              eq(chatActions.endpointId, currentEndpoint.id),
+              eq(
+                chatActions.providerActionId,
+                `slack_session_stop:${event.providerEventId}`,
+              ),
+              eq(chatActions.kind, "slack_session_stop"),
+            ),
+          )
+          .then((rows) => rows[0]?.id ?? null))
+      );
+    });
+  }
+
+  async function processSlackSessionStop(actionId: string): Promise<void> {
+    const now = new Date();
+    const staleBefore = new Date(now.getTime() - PROVIDER_EFFECT_STALE_MS);
+    const action = await db
+      .select()
+      .from(chatActions)
+      .where(
+        and(
+          eq(chatActions.id, actionId),
+          eq(chatActions.kind, "slack_session_stop"),
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+    if (!action || ["processed", "cancelled"].includes(action.status)) return;
+    if (action.status === "processing" && action.updatedAt > staleBefore)
+      return;
+    if (action.status === "failed") {
+      if (action.result?.retryable !== true) return;
+      const retryAt =
+        typeof action.result.retryAt === "string"
+          ? new Date(action.result.retryAt)
+          : null;
+      if (retryAt && retryAt > now) return;
+    } else if (action.status !== "received" && action.status !== "processing") {
+      return;
+    }
+    const payload = slackSessionStopPayload(action.payload);
+    const previousAttempts =
+      typeof action.result?.attempts === "number" &&
+      Number.isSafeInteger(action.result.attempts)
+        ? Math.max(0, action.result.attempts)
+        : 0;
+    const attempts = previousAttempts + 1;
+    if (!payload) {
+      await db
+        .update(chatActions)
+        .set({
+          status: "failed",
+          result: {
+            attempts,
+            code: "slack_session_stop_payload_invalid",
+            retryable: false,
+          },
+          updatedAt: now,
+        })
+        .where(eq(chatActions.id, action.id));
+      return;
+    }
+
+    type StopClaim =
+      | { kind: "cancel_run"; runId: string; userId: string }
+      | { kind: "settled" }
+      | { kind: "retry" };
+    const claim = await db.transaction(async (tx): Promise<StopClaim> => {
+      const current = await tx
+        .select()
+        .from(chatActions)
+        .where(eq(chatActions.id, action.id))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      const currentRetryAt =
+        typeof current?.result?.retryAt === "string"
+          ? new Date(current.result.retryAt)
+          : null;
+      const currentRetryIsDue =
+        currentRetryAt === null ||
+        (Number.isFinite(currentRetryAt.getTime()) && currentRetryAt <= now);
+      const eligible =
+        current?.status === "received" ||
+        (current?.status === "processing" &&
+          current.updatedAt <= staleBefore &&
+          (current.result?.attempts ?? 0) === previousAttempts) ||
+        (current?.status === "failed" &&
+          current.result?.retryable === true &&
+          currentRetryIsDue &&
+          (current.result?.attempts ?? 0) === previousAttempts);
+      if (!current || !eligible) return { kind: "settled" };
+
+      const settle = async (
+        code: string,
+        actorUserId: string | null,
+        targetKind: "run" | "wakeup" | "none",
+      ): Promise<StopClaim> => {
+        await tx
+          .update(chatActions)
+          .set({
+            status:
+              code === "slack_session_stop_cancelled"
+                ? "processed"
+                : "cancelled",
+            result: { attempts, code, retryable: false },
+            updatedAt: now,
+          })
+          .where(eq(chatActions.id, current.id));
+        await logActivity(tx as unknown as Db, {
+          companyId: current.companyId,
+          actorType: actorUserId ? "user" : "system",
+          actorId: actorUserId ?? "slack-session-stop",
+          action:
+            code === "slack_session_stop_cancelled"
+              ? "chat.slack_session_stopped"
+              : "chat.slack_session_stop_filtered",
+          entityType: "chat_action",
+          entityId: current.id,
+          details: {
+            endpointId: current.endpointId,
+            conversationId: current.conversationId,
+            eventTimestamp: payload.eventTimestamp,
+            targetKind,
+            resultCode: code,
+          },
+        });
+        return { kind: "settled" };
+      };
+
+      if (
+        !payload.target ||
+        !payload.issueId ||
+        !payload.sessionGeneration ||
+        !current.conversationId ||
+        !current.principalId
+      ) {
+        return settle("slack_session_stop_no_current_work", null, "none");
+      }
+      const endpoint = await tx
+        .select()
+        .from(chatEndpoints)
+        .where(
+          and(
+            eq(chatEndpoints.id, current.endpointId),
+            eq(chatEndpoints.companyId, current.companyId),
+            eq(chatEndpoints.provider, "slack"),
+            eq(chatEndpoints.status, "active"),
+            eq(chatEndpoints.assignedAgentId, payload.assignedAgentId),
+          ),
+        )
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      const conversation = endpoint
+        ? await tx
+            .select()
+            .from(chatConversations)
+            .where(
+              and(
+                eq(chatConversations.id, current.conversationId),
+                eq(chatConversations.companyId, current.companyId),
+                eq(chatConversations.endpointId, current.endpointId),
+                eq(chatConversations.issueId, payload.issueId),
+                eq(chatConversations.externalThreadId, payload.threadId),
+                eq(
+                  chatConversations.sessionGeneration,
+                  payload.sessionGeneration,
+                ),
+                inArray(chatConversations.state, ["active", "waiting"]),
+              ),
+            )
+            .for("update")
+            .then((rows) => rows[0] ?? null)
+        : null;
+      const resource =
+        endpoint && conversation?.resourceId
+          ? await tx
+              .select()
+              .from(chatEndpointResources)
+              .where(
+                and(
+                  eq(chatEndpointResources.id, conversation.resourceId),
+                  eq(chatEndpointResources.companyId, current.companyId),
+                  eq(chatEndpointResources.endpointId, current.endpointId),
+                ),
+              )
+              .for("update")
+              .then((rows) => rows[0] ?? null)
+          : null;
+      const principal = endpoint
+        ? await tx
+            .select()
+            .from(chatExternalPrincipals)
+            .where(
+              and(
+                eq(chatExternalPrincipals.id, current.principalId),
+                eq(chatExternalPrincipals.companyId, current.companyId),
+                eq(chatExternalPrincipals.provider, "slack"),
+                eq(
+                  chatExternalPrincipals.providerAccountId,
+                  endpoint.providerAccountId ?? "unknown",
+                ),
+                eq(chatExternalPrincipals.externalId, payload.userId),
+                eq(chatExternalPrincipals.kind, "user"),
+                eq(chatExternalPrincipals.isBot, false),
+              ),
+            )
+            .for("update")
+            .then((rows) => rows[0] ?? null)
+        : null;
+      const authorization =
+        endpoint && principal
+          ? await lockCurrentPrincipalAuthorization(tx, endpoint, principal.id)
+          : null;
+      const destinationAllowed =
+        endpoint && conversation
+          ? conversation.isDirectMessage
+            ? endpoint.allowDirectMessages
+            : nonDirectDestinationAllowed(endpoint, resource)
+          : false;
+      const issue =
+        endpoint && conversation
+          ? await tx
+              .select()
+              .from(issues)
+              .where(
+                and(
+                  eq(issues.id, payload.issueId),
+                  eq(issues.companyId, current.companyId),
+                  eq(issues.assigneeAgentId, payload.assignedAgentId),
+                ),
+              )
+              .for("update")
+              .then((rows) => rows[0] ?? null)
+          : null;
+      if (
+        !endpoint ||
+        !conversation ||
+        !principal ||
+        !authorization?.allowed ||
+        !authorization.userId ||
+        !destinationAllowed ||
+        !issue
+      ) {
+        return settle(
+          "slack_session_stop_no_longer_authorized",
+          null,
+          payload.target.kind,
+        );
+      }
+
+      const eventCutoff = new Date(payload.occurredAt);
+      let runId: string | null = null;
+      if (payload.target.kind === "run") {
+        runId = payload.target.id;
+      } else {
+        const wakeup = await tx
+          .select()
+          .from(agentWakeupRequests)
+          .where(
+            and(
+              eq(agentWakeupRequests.id, payload.target.id),
+              eq(agentWakeupRequests.companyId, current.companyId),
+              eq(agentWakeupRequests.agentId, payload.assignedAgentId),
+              lte(agentWakeupRequests.requestedAt, eventCutoff),
+              or(
+                sql`${agentWakeupRequests.payload}->>'issueId' = ${issue.id}`,
+                sql`${agentWakeupRequests.payload}->>'taskId' = ${issue.id}`,
+                sql`${agentWakeupRequests.payload}->'_paperclipWakeContext'->>'issueId' = ${issue.id}`,
+                sql`${agentWakeupRequests.payload}->'_paperclipWakeContext'->>'taskId' = ${issue.id}`,
+              ),
+            ),
+          )
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (
+          wakeup &&
+          !wakeup.runId &&
+          ["queued", "deferred_issue_execution"].includes(wakeup.status) &&
+          !issue.executionRunId
+        ) {
+          await tx
+            .update(agentWakeupRequests)
+            .set({
+              status: "cancelled",
+              finishedAt: now,
+              error: "Cancelled from the bound Slack agent session",
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(agentWakeupRequests.id, wakeup.id),
+                inArray(agentWakeupRequests.status, [
+                  "queued",
+                  "deferred_issue_execution",
+                ]),
+                isNull(agentWakeupRequests.runId),
+              ),
+            );
+          const agentName = await tx
+            .select({ name: agents.name })
+            .from(agents)
+            .where(
+              and(
+                eq(agents.companyId, current.companyId),
+                eq(agents.id, payload.assignedAgentId),
+              ),
+            )
+            .then((rows) => rows[0]?.name ?? "Paperclip agent");
+          await stageAuthorizedTaskControlPublication(tx, {
+            companyId: current.companyId,
+            conversationId: conversation.id,
+            endpointId: current.endpointId,
+            idempotencyKey: `control:stop:${current.id}`,
+            issueId: issue.id,
+            payload: projectSafeChatPublication({
+              classification: "external",
+              progressState: "failed",
+              source: "safe_milestone",
+              text: safeMilestoneText({
+                agentName,
+                errorCode: "slack_session_stopped",
+                issueId: issue.id,
+                milestone: "failed",
+                publicBaseUrl,
+              }),
+            }),
+            principalId: principal.id,
+          });
+          return settle(
+            "slack_session_stop_cancelled",
+            authorization.userId,
+            "wakeup",
+          );
+        }
+        runId = wakeup?.runId ?? null;
+        if (!runId && wakeup?.status === "claimed") {
+          await tx
+            .update(chatActions)
+            .set({
+              status: "failed",
+              result: {
+                attempts,
+                code: "slack_session_stop_wakeup_in_flight",
+                retryable: true,
+                retryAt: new Date(Date.now() + 1_000).toISOString(),
+              },
+              updatedAt: now,
+            })
+            .where(eq(chatActions.id, current.id));
+          return { kind: "retry" };
+        }
+      }
+
+      const run = runId
+        ? await tx
+            .select()
+            .from(heartbeatRuns)
+            .where(
+              and(
+                eq(heartbeatRuns.id, runId),
+                eq(heartbeatRuns.companyId, current.companyId),
+                eq(heartbeatRuns.agentId, payload.assignedAgentId),
+                payload.target.kind === "wakeup"
+                  ? eq(heartbeatRuns.wakeupRequestId, payload.target.id)
+                  : and(
+                      lte(heartbeatRuns.createdAt, eventCutoff),
+                      or(
+                        isNull(heartbeatRuns.startedAt),
+                        lte(heartbeatRuns.startedAt, eventCutoff),
+                      ),
+                    ),
+                or(
+                  sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${issue.id}`,
+                  sql`${heartbeatRuns.contextSnapshot}->>'taskId' = ${issue.id}`,
+                ),
+              ),
+            )
+            .for("update")
+            .then((rows) => rows[0] ?? null)
+        : null;
+      if (!run) {
+        return settle(
+          "slack_session_stop_target_superseded",
+          authorization.userId,
+          payload.target.kind,
+        );
+      }
+      if (run.status === "cancelled") {
+        return settle(
+          "slack_session_stop_cancelled",
+          authorization.userId,
+          "run",
+        );
+      }
+      if (
+        issue.executionRunId !== run.id ||
+        !["queued", "running", "scheduled_retry"].includes(run.status)
+      ) {
+        return settle(
+          "slack_session_stop_target_superseded",
+          authorization.userId,
+          "run",
+        );
+      }
+      await tx
+        .update(chatActions)
+        .set({
+          status: "processing",
+          result: {
+            attempts,
+            authorizedUserId: authorization.userId,
+            runId: run.id,
+          },
+          updatedAt: now,
+        })
+        .where(eq(chatActions.id, current.id));
+      return {
+        kind: "cancel_run",
+        runId: run.id,
+        userId: authorization.userId,
+      };
+    });
+    if (claim.kind !== "cancel_run") return;
+
+    try {
+      if (!options.heartbeat.cancelRun) {
+        throw new Error("Heartbeat cancellation is unavailable");
+      }
+      await options.heartbeat.cancelRun(
+        claim.runId,
+        "Stopped from the bound Slack agent session",
+        {
+          errorCode: "slack_session_stopped",
+          eventMessage: "run cancelled from Slack",
+          eventPayload: {
+            endpointId: action.endpointId,
+            conversationId: action.conversationId,
+            provider: "slack",
+          },
+        },
+      );
+      await enqueueChatRunMilestones(db, { publicBaseUrl });
+      const authoritativeRun = await db
+        .select({ status: heartbeatRuns.status })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, claim.runId))
+        .then((rows) => rows[0] ?? null);
+      const cancellationWon = authoritativeRun?.status === "cancelled";
+      await db.transaction(async (tx) => {
+        const [settled] = await tx
+          .update(chatActions)
+          .set({
+            status: cancellationWon ? "processed" : "cancelled",
+            result: {
+              attempts,
+              code: cancellationWon
+                ? "slack_session_stop_cancelled"
+                : "slack_session_stop_target_superseded",
+              runId: claim.runId,
+            },
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(chatActions.id, action.id),
+              eq(chatActions.status, "processing"),
+              sql`(${chatActions.result}->>'attempts')::int = ${attempts}`,
+              sql`${chatActions.result}->>'runId' = ${claim.runId}`,
+            ),
+          )
+          .returning({ id: chatActions.id });
+        if (!settled) return;
+        await logActivity(tx as unknown as Db, {
+          companyId: action.companyId,
+          actorType: "user",
+          actorId: claim.userId,
+          action: cancellationWon
+            ? "chat.slack_session_stopped"
+            : "chat.slack_session_stop_filtered",
+          entityType: "chat_action",
+          entityId: action.id,
+          details: {
+            endpointId: action.endpointId,
+            conversationId: action.conversationId,
+            eventTimestamp: payload.eventTimestamp,
+            targetKind: "run",
+            resultCode: cancellationWon
+              ? "slack_session_stop_cancelled"
+              : "slack_session_stop_target_superseded",
+          },
+        });
+      });
+    } catch (error) {
+      const retryable = attempts < 5;
+      await db
+        .update(chatActions)
+        .set({
+          status: "failed",
+          result: {
+            attempts,
+            code: "slack_session_stop_cancellation_failed",
+            retryable,
+            ...(retryable
+              ? {
+                  retryAt: new Date(
+                    Date.now() + Math.min(60_000, 1_000 * 2 ** (attempts - 1)),
+                  ).toISOString(),
+                }
+              : {}),
+          },
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(chatActions.id, action.id),
+            eq(chatActions.status, "processing"),
+            sql`(${chatActions.result}->>'attempts')::int = ${attempts}`,
+            sql`${chatActions.result}->>'runId' = ${claim.runId}`,
+          ),
+        );
+      logger.warn(
+        {
+          actionId: action.id,
+          endpointId: action.endpointId,
+          attempts,
+          error: redactError(error),
+        },
+        "Slack session stop cancellation deferred",
+      );
+    }
+  }
+
+  async function processPendingSlackSessionStops(
+    limit = 25,
+    onlyActionId?: string,
+  ) {
+    const now = new Date();
+    const staleBefore = new Date(now.getTime() - PROVIDER_EFFECT_STALE_MS);
+    const actions = await db
+      .select({ id: chatActions.id })
+      .from(chatActions)
+      .where(
+        and(
+          eq(chatActions.kind, "slack_session_stop"),
+          ...(onlyActionId ? [eq(chatActions.id, onlyActionId)] : []),
+          or(
+            eq(chatActions.status, "received"),
+            and(
+              eq(chatActions.status, "processing"),
+              lte(chatActions.updatedAt, staleBefore),
+            ),
+            and(
+              eq(chatActions.status, "failed"),
+              sql`coalesce(${chatActions.result}->>'retryable', 'false') = 'true'`,
+              sql`(${chatActions.result}->>'retryAt' is null or (${chatActions.result}->>'retryAt')::timestamptz <= ${now.toISOString()}::timestamptz)`,
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(chatActions.createdAt))
+      .limit(limit);
+    for (const action of actions) await processSlackSessionStop(action.id);
+    return actions.length;
+  }
+
   async function handleWebhook(
     publicId: string,
     provider: ChatSdkProvider,
@@ -17613,6 +18501,28 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       lifecyclePayload &&
       endpointRuntime.acceptsProviderScope(lifecyclePayload)
     ) {
+      if (endpoint.provider === "slack") {
+        const stop = parseSlackSessionStop(
+          lifecyclePayload,
+          endpoint.providerAccountId,
+        );
+        if (stop) {
+          const actionId = await stageSlackSessionStop(
+            endpoint,
+            stop,
+            runtimeContext,
+          );
+          if (actionId) {
+            if (options.deferWebhookProcessing === true) {
+              scheduleMessageProcessing(() =>
+                processSlackSessionStop(actionId),
+              );
+            } else {
+              await processSlackSessionStop(actionId);
+            }
+          }
+        }
+      }
       const effects = parseChatProviderLifecycle({
         provider: endpoint.provider,
         headers: lifecycleInspection.headers,
@@ -17692,7 +18602,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         );
       }
     }
-    if (provider === "microsoft-teams" && response.ok && lifecyclePayload) {
+    if (
+      provider === "microsoft-teams" &&
+      response.ok &&
+      lifecyclePayload &&
+      endpointRuntime.acceptsProviderScope(lifecyclePayload)
+    ) {
       const lifecycle = microsoftTeamsLifecycleEventFromPayload(
         lifecyclePayload,
         endpointRuntime,
@@ -17727,6 +18642,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           processPendingGitHubWebhookIngress(limit),
           processPendingProviderEffects(limit),
           processPendingReceiptReactions(limit),
+          processPendingSlackSessionStops(limit),
           processPendingTelegramMaintenance(limit),
           // Slack task starts are an action-backed outbox. Queued work may
           // post once; provider-confirmed rows perform Paperclip-only
@@ -18325,6 +19241,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       slashActions,
       providerEffects,
       githubIngressFailures,
+      slackSessionActions,
     ] = await Promise.all([
       db
         .select()
@@ -18373,6 +19290,20 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           ),
         )
         .orderBy(desc(chatActions.createdAt))
+        .limit(100),
+      db
+        .select()
+        .from(chatActions)
+        .where(
+          and(
+            eq(chatActions.endpointId, endpointId),
+            inArray(chatActions.kind, [
+              "slack_session_sync",
+              "slack_session_stop",
+            ]),
+          ),
+        )
+        .orderBy(desc(chatActions.updatedAt))
         .limit(100),
     ]);
     const ambiguousProviderEffectDeliveryIds = new Set(
@@ -18494,6 +19425,43 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             "retry_anyway",
             "cancel",
           ] as const,
+        };
+      }),
+      ...slackSessionActions.map((row) => {
+        const isSync = row.kind === "slack_session_sync";
+        const retrying =
+          row.status === "received" &&
+          row.result?.code === "slack_session_sync_retry";
+        return {
+          id: row.id,
+          kind: "action" as const,
+          actionType: isSync
+            ? ("slack_session_sync" as const)
+            : ("slack_session_stop" as const),
+          status: retrying ? "retry" : row.status,
+          summary: isSync ? "Slack session status" : "Slack Stop request",
+          detail: isSync
+            ? row.result?.outcome === "unavailable"
+              ? "Slack has not enabled native session status for this destination. Message delivery continues."
+              : row.result?.code === "slack_session_sync_rejected"
+                ? "Slack rejected the session indicator update. Check app permissions and channel access; message delivery is tracked separately."
+                : retrying
+                  ? "The Slack session indicator is waiting to sync. Paperclip will not resend the response."
+                  : row.result?.sessionStatus === "processing"
+                    ? "Working status is refreshed automatically while the run remains active."
+                    : null
+            : row.status === "processed"
+              ? "Paperclip stopped the work authorized by this request."
+              : row.status === "cancelled"
+                ? "No work was stopped: this request was no longer authorized or its target was no longer current."
+                : row.status === "failed"
+                  ? row.result?.retryable === true
+                    ? "The Stop request could not finish yet. Paperclip will retry against the original work only."
+                    : "The Stop request could not be completed. Check the task's current run before trying again."
+                  : "Paperclip is processing this Stop request against its original task and run.",
+          createdAt: row.updatedAt.toISOString(),
+          replayable: false,
+          resolutionActions: [],
         };
       }),
       ...githubIngressFailures.map((row) => {
@@ -21232,6 +22200,351 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     return result;
   }
 
+  async function processPendingSlackSessionSyncs(limit = 25) {
+    const now = new Date();
+    const actions = await db
+      .select()
+      .from(chatActions)
+      .where(
+        and(
+          eq(chatActions.kind, "slack_session_sync"),
+          or(
+            and(
+              eq(chatActions.status, "received"),
+              sql`(${chatActions.result}->>'retryAt' is null or (${chatActions.result}->>'retryAt')::timestamptz <= ${now.toISOString()}::timestamptz)`,
+            ),
+            and(
+              eq(chatActions.status, "processing"),
+              lte(chatActions.updatedAt, new Date(now.getTime() - 60_000)),
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(chatActions.updatedAt))
+      .limit(limit);
+    await options.slackSessionSyncSelectionBarrier?.();
+    for (const action of actions) {
+      const payload = slackSessionSyncPayload(action.payload);
+      if (!payload || !action.conversationId) {
+        await db
+          .update(chatActions)
+          .set({
+            status: "failed",
+            result: { code: "slack_session_payload_invalid" },
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(chatActions.id, action.id),
+              eq(chatActions.updatedAt, action.updatedAt),
+            ),
+          );
+        continue;
+      }
+      const revisionWhere = and(
+        eq(chatActions.id, action.id),
+        sql`(${chatActions.payload}->>'revision')::bigint = ${payload.revision}`,
+      );
+      const selectedSnapshotWhere = and(
+        revisionWhere,
+        eq(chatActions.status, action.status),
+        eq(chatActions.updatedAt, action.updatedAt),
+      );
+      const record = await endpointRecord(action.endpointId);
+      if (record && ["paused", "attention"].includes(record.endpoint.status)) {
+        await db
+          .update(chatActions)
+          .set({
+            status: "received",
+            result: { retryAt: new Date(Date.now() + 30_000).toISOString() },
+            updatedAt: new Date(),
+          })
+          .where(selectedSnapshotWhere);
+        continue;
+      }
+      if (!record || record.endpoint.provider !== "slack") {
+        await db
+          .update(chatActions)
+          .set({
+            status: "cancelled",
+            result: { code: "slack_session_endpoint_unavailable" },
+            updatedAt: new Date(),
+          })
+          .where(selectedSnapshotWhere);
+        continue;
+      }
+      const attempts =
+        (typeof action.result?.attempts === "number"
+          ? action.result.attempts
+          : 0) + 1;
+      const ownerToken = randomUUID();
+      let ownsAttempt = false;
+      try {
+        await withCredentialMutationLease(record.endpoint, async (lease) => {
+          const claim = await db.transaction(async (tx) => {
+            await lease.assertOwned(tx);
+            const endpoint = await runtimeCallbackEndpoint(
+              tx,
+              action.endpointId,
+              {
+                generation: payload.runtimeGeneration,
+                credentialFingerprint: payload.credentialFingerprint,
+              },
+              ["active", "verifying"],
+            );
+            const conversation = endpoint
+              ? await tx
+                  .select()
+                  .from(chatConversations)
+                  .where(
+                    and(
+                      eq(chatConversations.id, action.conversationId!),
+                      eq(chatConversations.endpointId, endpoint.id),
+                      eq(chatConversations.companyId, endpoint.companyId),
+                      inArray(chatConversations.state, [
+                        "active",
+                        "waiting",
+                        "completed",
+                      ]),
+                    ),
+                  )
+                  .for("update")
+                  .then((rows) => rows[0] ?? null)
+              : null;
+            const resource =
+              endpoint && conversation?.resourceId
+                ? await tx
+                    .select()
+                    .from(chatEndpointResources)
+                    .where(
+                      and(
+                        eq(chatEndpointResources.id, conversation.resourceId),
+                        eq(chatEndpointResources.companyId, endpoint.companyId),
+                        eq(chatEndpointResources.endpointId, endpoint.id),
+                      ),
+                    )
+                    .for("update")
+                    .then((rows) => rows[0] ?? null)
+                : null;
+            const superseded = conversation
+              ? await tx
+                  .select({ id: chatConversations.id })
+                  .from(chatConversations)
+                  .where(
+                    and(
+                      eq(chatConversations.companyId, conversation.companyId),
+                      eq(chatConversations.endpointId, conversation.endpointId),
+                      eq(
+                        chatConversations.externalThreadId,
+                        conversation.externalThreadId,
+                      ),
+                      gt(
+                        chatConversations.sessionGeneration,
+                        conversation.sessionGeneration,
+                      ),
+                    ),
+                  )
+                  .limit(1)
+                  .then((rows) => rows.length > 0)
+              : false;
+            if (
+              !endpoint ||
+              !conversation ||
+              superseded ||
+              !(conversation.isDirectMessage
+                ? endpoint.allowDirectMessages
+                : nonDirectDestinationAllowed(endpoint, resource))
+            ) {
+              await tx
+                .update(chatActions)
+                .set({
+                  status: "cancelled",
+                  result: { code: "slack_session_destination_changed" },
+                  updatedAt: new Date(),
+                })
+                .where(selectedSnapshotWhere);
+              return null;
+            }
+            // Recompute at dispatch: a delayed processing retry must not
+            // overwrite a newer final response or a later question card.
+            const publication = await tx
+              .select()
+              .from(chatPublications)
+              .where(
+                and(
+                  eq(chatPublications.companyId, endpoint.companyId),
+                  eq(chatPublications.endpointId, endpoint.id),
+                  eq(chatPublications.conversationId, conversation.id),
+                  eq(chatPublications.state, "published"),
+                  sql`${chatPublications.idempotencyKey} not like 'explicit%'`,
+                  sql`${chatPublications.idempotencyKey} not like 'control:status:%'`,
+                ),
+              )
+              .orderBy(
+                desc(chatPublications.publishedAt),
+                desc(chatPublications.createdAt),
+                desc(chatPublications.id),
+              )
+              .limit(1)
+              .then((rows) => rows[0] ?? null);
+            if (!publication) {
+              await tx
+                .update(chatActions)
+                .set({
+                  status: "cancelled",
+                  result: { code: "slack_session_no_published_state" },
+                  updatedAt: new Date(),
+                })
+                .where(selectedSnapshotWhere);
+              return null;
+            }
+            let status = slackSessionStatusForPublication(
+              publication.payload,
+              conversation.state === "completed",
+            );
+            const runId = runIdFromMilestonePublication(publication);
+            if (status === "processing" && runId) {
+              const run = await tx
+                .select({ status: heartbeatRuns.status })
+                .from(heartbeatRuns)
+                .where(
+                  and(
+                    eq(heartbeatRuns.id, runId),
+                    eq(heartbeatRuns.companyId, endpoint.companyId),
+                    eq(heartbeatRuns.agentId, endpoint.assignedAgentId),
+                  ),
+                )
+                .then((rows) => rows[0] ?? null);
+              // Stop may finish before its confirmation publication. Never
+              // resurrect processing from that run's earlier working receipt.
+              if (!run || !["queued", "running"].includes(run.status))
+                status = "active";
+            }
+            const claimed = await tx
+              .update(chatActions)
+              .set({
+                status: "processing",
+                result: { attempts, ownerToken },
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  selectedSnapshotWhere,
+                  or(
+                    and(
+                      eq(chatActions.status, "received"),
+                      sql`(${chatActions.result}->>'retryAt' is null or (${chatActions.result}->>'retryAt')::timestamptz <= ${new Date().toISOString()}::timestamptz)`,
+                    ),
+                    and(
+                      eq(chatActions.status, "processing"),
+                      lte(chatActions.updatedAt, new Date(Date.now() - 60_000)),
+                    ),
+                  ),
+                ),
+              )
+              .returning({ id: chatActions.id });
+            await lease.assertOwned(tx);
+            return claimed.length ? { endpoint, conversation, status } : null;
+          });
+          if (!claim) return;
+          ownsAttempt = true;
+          const credentials = await resolveCredentials(claim.endpoint);
+          await lease.assertOwned();
+          const outcome = await setSlackSessionStatus({
+            botToken: credentials.botToken,
+            threadId: claim.conversation.externalThreadId,
+            status: claim.status,
+            fetch: fetchImpl,
+          });
+          await db.transaction(async (tx) => {
+            await lease.assertOwned(tx);
+            // Refresh long work before Slack's one-hour processing timeout.
+            // Unsupported sessions settle until a new publication restages
+            // them; completed threads must not create perpetual polling work.
+            const retryMs =
+              outcome === "updated" && claim.status === "processing"
+                ? 30 * 60_000
+                : null;
+            await tx
+              .update(chatActions)
+              .set({
+                status: retryMs === null ? "processed" : "received",
+                result: {
+                  attempts,
+                  outcome,
+                  sessionStatus: claim.status,
+                  ...(retryMs === null
+                    ? {}
+                    : {
+                        retryAt: new Date(Date.now() + retryMs).toISOString(),
+                      }),
+                },
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  revisionWhere,
+                  eq(chatActions.status, "processing"),
+                  sql`${chatActions.result}->>'ownerToken' = ${ownerToken}`,
+                ),
+              );
+          });
+        });
+      } catch (error) {
+        const disposition = classifyChatPublicationError(error, attempts);
+        // Unlike posting a message, repeating setStatus cannot duplicate any
+        // content. Ambiguous transport/receipt failures remain retryable, but
+        // a definite scope/auth/destination rejection waits for new activity.
+        const retryable =
+          disposition.kind === "retry" ||
+          disposition.kind === "delivery_unknown";
+        const retryMs =
+          disposition.kind === "retry"
+            ? disposition.retryAfterMs
+            : Math.min(5 * 60_000, 1_000 * 2 ** Math.min(attempts, 8));
+        await db
+          .update(chatActions)
+          .set({
+            status: retryable ? "received" : "failed",
+            result: {
+              attempts,
+              code: retryable
+                ? "slack_session_sync_retry"
+                : "slack_session_sync_rejected",
+              ...(retryable
+                ? { retryAt: new Date(Date.now() + retryMs).toISOString() }
+                : {}),
+            },
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              revisionWhere,
+              ownsAttempt
+                ? and(
+                    eq(chatActions.status, "processing"),
+                    sql`${chatActions.result}->>'ownerToken' = ${ownerToken}`,
+                  )
+                : and(
+                    eq(chatActions.status, "received"),
+                    eq(chatActions.updatedAt, action.updatedAt),
+                  ),
+            ),
+          );
+        logger.warn(
+          {
+            endpointId: action.endpointId,
+            actionId: action.id,
+            retryable,
+            error: redactError(error),
+          },
+          "Slack session status update did not complete; message delivery is unchanged",
+        );
+      }
+    }
+    return actions.length;
+  }
+
   async function processPendingPublications(limit = 25) {
     await reconcileTerminalConfirmationActions(limit);
     const now = new Date();
@@ -21788,6 +23101,21 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                     publication,
                     committedAt,
                   );
+                  if (
+                    authorizationClaim.endpoint.provider === "slack" &&
+                    !isExplicitOperatorPublication(publication) &&
+                    !publication.idempotencyKey.startsWith("control:status:")
+                  ) {
+                    await stageSlackSessionSync(tx, {
+                      companyId: publication.companyId,
+                      endpointId: publication.endpointId,
+                      conversationId: publication.conversationId,
+                      runtimeGeneration:
+                        currentPublicationRuntimeContext.generation,
+                      credentialFingerprint:
+                        currentPublicationRuntimeContext.credentialFingerprint,
+                    });
+                  }
                   await credentialLease.assertOwned(tx);
                 });
               } catch (error) {
@@ -21810,6 +23138,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       }
     }
     await processPendingInteractionWakeups(limit);
+    await processPendingSlackSessionSyncs(limit);
     return attemptedIds.length;
   }
 
@@ -21857,6 +23186,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     processPendingGitHubWebhookIngress,
     processPendingProviderEffects,
     processPendingReceiptReactions,
+    processPendingSlackSessionStops,
+    processPendingSlackSessionSyncs,
     getIssueBinding,
     shutdown: async () => {
       shuttingDown = true;

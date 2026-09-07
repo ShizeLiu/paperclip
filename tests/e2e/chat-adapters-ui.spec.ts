@@ -722,6 +722,8 @@ features:
     home_tab_enabled: false
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
+  agent_view:
+    agent_description: "Work with a Paperclip agent in a task-backed conversation."
   bot_user:
     display_name: "maya"
   slash_commands:
@@ -734,6 +736,7 @@ oauth_config:
   scopes:
     bot:
       - app_mentions:read
+      - assistant:write
       - channels:history
       - channels:read
       - chat:write
@@ -756,6 +759,7 @@ settings:
   event_subscriptions:
     request_url: "${webhookUrl}"
     bot_events:
+      - agent_session_stopped
       - app_mention
       - message.channels
       - message.groups
@@ -862,14 +866,29 @@ async function expectMinimumProviderSetup(page: Page, provider: ProviderCase) {
     expect(manifest).toContain("ChatMessage.Read.Chat");
     expect(manifest).toContain('"personal"');
     expect(manifest).toContain('"team"');
-    expect(manifest).toContain('"groupchat"');
+    expect(manifest).toContain('"groupChat"');
     expect(JSON.parse(manifest)).toMatchObject({
+      bots: [
+        {
+          commandLists: [
+            {
+              scopes: ["personal", "groupChat"],
+              commands: [
+                { title: "/status" },
+                { title: "/new" },
+                { title: "/close" },
+              ],
+            },
+          ],
+        },
+      ],
       webApplicationInfo: {
         id: "<application-client-id>",
         resource: "https://paperclip.ing",
       },
     });
     expect(manifest).not.toContain("api://paperclip-chat/");
+    expect(manifest).not.toContain("supportsTargetedMessages");
     await expect(
       page.getByRole("button", { name: "Copy manifest settings" }),
     ).toBeDisabled();
@@ -879,6 +898,10 @@ async function expectMinimumProviderSetup(page: Page, provider: ProviderCase) {
     ).toBeVisible();
     await expect(
       page.getByText(/only associates the RSC permissions/),
+    ).toBeVisible();
+    await expect(page.getByText(/receive every message/).first()).toBeVisible();
+    await expect(
+      page.getByText(/One team install covers its standard channels/),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Open Microsoft Entra" }),

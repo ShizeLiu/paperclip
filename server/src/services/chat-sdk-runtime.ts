@@ -547,7 +547,7 @@ interface TeamsApiClientInternals {
 }
 
 interface TeamsAdapterInternals {
-  app?: { api: TeamsApiClientInternals };
+  app?: { api: TeamsApiClientInternals; id?: unknown };
   chat?: {
     getState(): {
       get(key: string): Promise<unknown>;
@@ -558,7 +558,11 @@ interface TeamsAdapterInternals {
     conversationId?: unknown;
     serviceUrl?: unknown;
   };
+  cacheUserContext?: (activity: unknown) => void;
+  getIncomingUser?: (...args: unknown[]) => Promise<unknown>;
+  getUser?: (...args: unknown[]) => Promise<unknown>;
   openDM?: (userId: string) => Promise<unknown>;
+  paperclipRecordAcceptedActivity?: (activity: unknown) => Promise<void>;
   paperclipRecordThreadServiceUrl?: (
     threadId: string,
     serviceUrl: unknown,
@@ -570,6 +574,8 @@ function teamsConversationRouteStateKey(conversationId: string): string {
   const baseConversationId = conversationId.replace(/;messageid=[^;]+/i, "");
   return `teams:serviceUrl:conversation:${Buffer.from(baseConversationId).toString("base64url")}`;
 }
+
+const TEAMS_ACCEPTED_ACTIVITY_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
 function normalizedTeamsServiceUrl(value: unknown): string {
   if (typeof value !== "string" || value.length > 2048) {
@@ -646,6 +652,15 @@ export function scopeMicrosoftTeamsEgress(
   if (typeof teams.openDM !== "function") {
     throw new TeamsAdapterCompatibilityError("openDM is unavailable");
   }
+  if (typeof teams.cacheUserContext !== "function") {
+    throw new TeamsAdapterCompatibilityError("cacheUserContext is unavailable");
+  }
+  if (typeof teams.getIncomingUser !== "function") {
+    throw new TeamsAdapterCompatibilityError("getIncomingUser is unavailable");
+  }
+  if (typeof teams.getUser !== "function") {
+    throw new TeamsAdapterCompatibilityError("getUser is unavailable");
+  }
   for (const methodName of TEAMS_THREAD_SCOPED_METHODS) {
     if (typeof teams[methodName] !== "function") {
       throw new TeamsAdapterCompatibilityError(`${methodName} is unavailable`);
@@ -668,6 +683,112 @@ export function scopeMicrosoftTeamsEgress(
   const trustedConfiguredApiUrl = configuredApiUrl
     ? normalizedTeamsServiceUrl(configuredApiUrl)
     : null;
+
+  // The pinned Teams adapter caches activity/user metadata and may query the
+  // members or Graph APIs before Chat dispatches to Paperclip's reach and
+  // tenant checks. Keep authenticated but unadmitted events observationally
+  // inert. Accepted activities explicitly persist the minimum routing context
+  // through paperclipRecordAcceptedActivity below.
+  teams.cacheUserContext = () => {};
+  teams.getIncomingUser = async () => null;
+  teams.getUser = async () => null;
+
+  teams.paperclipRecordAcceptedActivity = async (activityValue: unknown) => {
+    if (!isRecord(activityValue)) return;
+    const from = isRecord(activityValue.from) ? activityValue.from : null;
+    const conversation = isRecord(activityValue.conversation)
+      ? activityValue.conversation
+      : null;
+    const channelData = isRecord(activityValue.channelData)
+      ? activityValue.channelData
+      : null;
+    const userId =
+      typeof from?.id === "string" && from.id.length > 0 ? from.id : null;
+    if (!userId) return;
+    const state = teams.chat?.getState();
+    if (!state) {
+      throw new TeamsAdapterCompatibilityError(
+        "durable accepted-activity state is unavailable",
+      );
+    }
+    const ttl = TEAMS_ACCEPTED_ACTIVITY_CACHE_TTL_MS;
+    const writes: Promise<void>[] = [];
+    if (activityValue.serviceUrl !== undefined) {
+      writes.push(
+        state.set(
+          `teams:serviceUrl:${userId}`,
+          trustedTeamsServiceUrl(
+            activityValue.serviceUrl,
+            trustedConfiguredApiUrl,
+          ),
+          ttl,
+        ),
+      );
+    }
+    if (typeof from?.aadObjectId === "string" && from.aadObjectId.length > 0) {
+      writes.push(
+        state.set(`teams:aadObjectId:${userId}`, from.aadObjectId, ttl),
+      );
+    }
+    const tenantId = microsoftTeamsTenantIds(activityValue)[0];
+    if (tenantId) {
+      writes.push(state.set(`teams:tenantId:${userId}`, tenantId, ttl));
+    }
+    const conversationId =
+      typeof conversation?.id === "string" ? conversation.id : "";
+    const baseConversationId = conversationId.replace(/;messageid=[^;]+/i, "");
+    const conversationType =
+      typeof conversation?.conversationType === "string"
+        ? conversation.conversationType
+        : null;
+    const isPersonalConversation = conversationType
+      ? conversationType === "personal"
+      : !baseConversationId.startsWith("19:");
+    const team =
+      channelData && isRecord(channelData.team) ? channelData.team : null;
+    const channel =
+      channelData && isRecord(channelData.channel) ? channelData.channel : null;
+    if (
+      baseConversationId &&
+      !isPersonalConversation &&
+      typeof team?.aadGroupId === "string" &&
+      team.aadGroupId.length > 0 &&
+      typeof channel?.id === "string" &&
+      channel.id.length > 0
+    ) {
+      writes.push(
+        state.set(
+          `teams:channelContext:${baseConversationId}`,
+          JSON.stringify({
+            teamId: team.aadGroupId,
+            channelId: channel.id,
+          }),
+          ttl,
+        ),
+      );
+    }
+    if (
+      baseConversationId &&
+      typeof from?.aadObjectId === "string" &&
+      from.aadObjectId.length > 0 &&
+      isPersonalConversation
+    ) {
+      const appId = teams.app?.id;
+      if (typeof appId === "string" && appId.length > 0) {
+        writes.push(
+          state.set(
+            `teams:channelContext:${baseConversationId}`,
+            JSON.stringify({
+              type: "dm",
+              graphChatId: `19:${from.aadObjectId}_${appId}@unq.gbl.spaces`,
+            }),
+            ttl,
+          ),
+        );
+      }
+    }
+    await Promise.all(writes);
+  };
   let defaultApi = teams.app.api;
   const apiScope = new AsyncLocalStorage<TeamsApiClientInternals>();
   Object.defineProperty(teams.app, "api", {
@@ -1556,16 +1677,26 @@ export class ChatSdkEndpointRuntime {
   async recordMicrosoftTeamsRoute(
     threadId: string,
     serviceUrl: unknown,
+    raw?: unknown,
   ): Promise<void> {
     if (this.provider !== "microsoft-teams") return;
-    const recorder = (this.adapter as unknown as TeamsAdapterInternals)
-      .paperclipRecordThreadServiceUrl;
+    const teams = this.adapter as unknown as TeamsAdapterInternals;
+    const recorder = teams.paperclipRecordThreadServiceUrl;
     if (typeof recorder !== "function") {
       throw new TeamsAdapterCompatibilityError(
         "durable route recorder is unavailable",
       );
     }
     await recorder.call(this.adapter, threadId, serviceUrl);
+    if (raw !== undefined) {
+      const acceptedActivityRecorder = teams.paperclipRecordAcceptedActivity;
+      if (typeof acceptedActivityRecorder !== "function") {
+        throw new TeamsAdapterCompatibilityError(
+          "durable accepted-activity recorder is unavailable",
+        );
+      }
+      await acceptedActivityRecorder.call(this.adapter, raw);
+    }
   }
 
   channel(channelId: string): Channel {
@@ -1657,8 +1788,15 @@ export class ChatSdkEndpointRuntime {
         guildId === this.discordGuildId || guildId === null || guildId === "@me"
       );
     }
-    if (this.provider !== "microsoft-teams" || !this.microsoftTeamsTenantId)
-      return true;
+    if (this.provider !== "microsoft-teams") return true;
+    if (
+      isRecord(raw) &&
+      isRecord(raw.recipient) &&
+      raw.recipient.isTargeted === true
+    ) {
+      return false;
+    }
+    if (!this.microsoftTeamsTenantId) return true;
     const tenantIds = microsoftTeamsTenantIds(raw);
     return (
       tenantIds.length > 0 &&

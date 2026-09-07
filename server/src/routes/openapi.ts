@@ -888,7 +888,13 @@ const chatActivityResponseSchema = z
     id: z.string().uuid(),
     kind: z.enum(["delivery", "publication", "action", "health", "repair"]),
     actionType: z
-      .enum(["slash_task_start", "provider_effect", "github_webhook_ingress"])
+      .enum([
+        "slash_task_start",
+        "provider_effect",
+        "github_webhook_ingress",
+        "slack_session_sync",
+        "slack_session_stop",
+      ])
       .optional(),
     status: z.union([
       chatDeliveryStateSchema,

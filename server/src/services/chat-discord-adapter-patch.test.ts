@@ -27,6 +27,32 @@ function gatewayMessage(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function gatewayComponent(overrides: Record<string, unknown> = {}) {
+  return {
+    applicationId: "123456789012345678",
+    channel: { id: "thread-1", parentId: "channel-1", type: 11 },
+    channelId: "thread-1",
+    customId: "approve\nyes",
+    deferUpdate: vi.fn().mockResolvedValue(undefined),
+    guildId: "1457808928258658549",
+    id: "interaction-1",
+    isChatInputCommand: () => false,
+    isMessageComponent: () => true,
+    message: { id: "message-2" },
+    token: "interaction-token",
+    type: 3,
+    user: {
+      id: "user-1",
+      username: "ada",
+      globalName: "Ada",
+      bot: false,
+    },
+    values: ["yes"],
+    version: 1,
+    ...overrides,
+  };
+}
+
 function harness(config: Record<string, unknown> = {}) {
   const handlers = new Map<string, GatewayHandler>();
   const client = {
@@ -144,6 +170,46 @@ describe("Paperclip Discord adapter patch", () => {
           id: "message-1",
           text: "original content",
         }),
+      }),
+    );
+  });
+
+  it("honors rate limits while fetching a partial Gateway message edit", async () => {
+    vi.useFakeTimers();
+    const { adapter, chat, client, handlers, logger } = harness();
+    await adapter.initialize(chat as never);
+    (
+      adapter as unknown as {
+        setupLegacyGatewayHandlers(
+          client: unknown,
+          shuttingDown: () => boolean,
+        ): void;
+      }
+    ).setupLegacyGatewayHandlers(client, () => false);
+
+    const complete = gatewayMessage();
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce({ retryAfter: 2 })
+      .mockResolvedValueOnce(complete);
+    const handling = handlers.get("messageUpdate")?.(
+      gatewayMessage({ content: "original", editedAt: null }),
+      gatewayMessage({ partial: true, fetch }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await handling;
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(chat.processMessageUpdated).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Retrying Discord Gateway event after processing error",
+      expect.objectContaining({
+        event: "message_update_fetch",
+        messageId: "message-1",
+        retryAfterMs: 2_000,
       }),
     );
   });
@@ -932,7 +998,7 @@ describe("Paperclip Discord adapter patch", () => {
     expect(operation).toHaveBeenCalledTimes(2);
   });
 
-  it("acknowledges a component once and retries its durable action callback", async () => {
+  it("acknowledges a component only after its durable action callback succeeds", async () => {
     const { adapter, chat, client, handlers, logger } = harness();
     chat.handleActionEvent
       .mockRejectedValueOnce(new Error("database unavailable"))
@@ -947,32 +1013,14 @@ describe("Paperclip Discord adapter patch", () => {
       }
     ).setupLegacyGatewayHandlers(client, () => false);
 
-    const deferUpdate = vi.fn().mockResolvedValue(undefined);
-    await handlers.get("interactionCreate")?.({
-      applicationId: "123456789012345678",
-      channel: { id: "thread-1", parentId: "channel-1", type: 11 },
-      channelId: "thread-1",
-      customId: "approve\nyes",
-      deferUpdate,
-      guildId: "1457808928258658549",
-      id: "interaction-1",
-      isChatInputCommand: () => false,
-      isMessageComponent: () => true,
-      message: { id: "message-2" },
-      token: "interaction-token",
-      type: 3,
-      user: {
-        id: "user-1",
-        username: "ada",
-        globalName: "Ada",
-        bot: false,
-      },
-      values: ["yes"],
-      version: 1,
-    });
+    const interaction = gatewayComponent();
+    await handlers.get("interactionCreate")?.(interaction);
 
-    expect(deferUpdate).toHaveBeenCalledTimes(1);
+    expect(interaction.deferUpdate).toHaveBeenCalledTimes(1);
     expect(chat.handleActionEvent).toHaveBeenCalledTimes(2);
+    expect(chat.handleActionEvent.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      interaction.deferUpdate.mock.invocationCallOrder[0]!,
+    );
     expect(chat.handleActionEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({
         actionId: "approve",
@@ -987,6 +1035,99 @@ describe("Paperclip Discord adapter patch", () => {
       expect.objectContaining({
         event: "interaction",
         messageId: "message-2",
+      }),
+    );
+  });
+
+  it("does not acknowledge an action that Paperclip durably rejects", async () => {
+    const { adapter, chat, client, handlers, logger } = harness();
+    chat.handleActionEvent.mockRejectedValueOnce(
+      Object.assign(new Error("action rejected"), {
+        code: "chat_discord_gateway_action_rejected",
+      }),
+    );
+    await adapter.initialize(chat as never);
+    (
+      adapter as unknown as {
+        setupLegacyGatewayHandlers(
+          client: unknown,
+          shuttingDown: () => boolean,
+        ): void;
+      }
+    ).setupLegacyGatewayHandlers(client, () => false);
+
+    const interaction = gatewayComponent();
+    await handlers.get("interactionCreate")?.(interaction);
+
+    expect(chat.handleActionEvent).toHaveBeenCalledTimes(1);
+    expect(interaction.deferUpdate).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      "Discord Gateway action was not acknowledged after Paperclip rejected it",
+      expect.objectContaining({
+        event: "interaction",
+        messageId: "message-2",
+      }),
+    );
+  });
+
+  it("does not acknowledge or retry an action after the provider deadline", async () => {
+    vi.useFakeTimers();
+    const { adapter, chat, client, handlers, logger } = harness();
+    chat.handleActionEvent.mockImplementationOnce(
+      async () =>
+        await new Promise<void>((resolve) => setTimeout(resolve, 2_600)),
+    );
+    await adapter.initialize(chat as never);
+    (
+      adapter as unknown as {
+        setupLegacyGatewayHandlers(
+          client: unknown,
+          shuttingDown: () => boolean,
+        ): void;
+      }
+    ).setupLegacyGatewayHandlers(client, () => false);
+
+    const interaction = gatewayComponent();
+    const handling = handlers.get("interactionCreate")?.(interaction);
+    await vi.advanceTimersByTimeAsync(2_600);
+    await handling;
+
+    expect(chat.handleActionEvent).toHaveBeenCalledTimes(1);
+    expect(interaction.deferUpdate).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Discord Gateway event completed after provider acknowledgement deadline",
+      expect.objectContaining({
+        event: "interaction",
+        messageId: "message-2",
+      }),
+    );
+  });
+
+  it("does not start a retry that cannot finish before the provider deadline", async () => {
+    vi.useFakeTimers();
+    const { adapter, chat, client, handlers, logger } = harness();
+    chat.handleActionEvent.mockRejectedValueOnce({ retryAfter: 3 });
+    await adapter.initialize(chat as never);
+    (
+      adapter as unknown as {
+        setupLegacyGatewayHandlers(
+          client: unknown,
+          shuttingDown: () => boolean,
+        ): void;
+      }
+    ).setupLegacyGatewayHandlers(client, () => false);
+
+    const interaction = gatewayComponent();
+    await handlers.get("interactionCreate")?.(interaction);
+
+    expect(chat.handleActionEvent).toHaveBeenCalledTimes(1);
+    expect(interaction.deferUpdate).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Discord Gateway event retry would exceed provider acknowledgement deadline",
+      expect.objectContaining({
+        event: "interaction",
+        messageId: "message-2",
+        retryAfterMs: 3_000,
       }),
     );
   });
