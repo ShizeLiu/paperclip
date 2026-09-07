@@ -838,6 +838,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         | "githubWebhookReplayBarrier"
         | "githubWebhookResponseBudgetMs"
         | "publicBaseUrl"
+        | "webhookPublicBaseUrl"
         | "nativeBotIdentityClaimBarrier"
         | "confirmationResolutionPersistBarrier"
         | "conversationLeaseRenewalIntervalMs"
@@ -7358,215 +7359,222 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await context.service.shutdown();
   });
 
-  it("configures Telegram and preserves queued updates when reconnecting its webhook", async () => {
-    const fixture = await seedCompany();
-    const botToken = "123456:telegram-test-token";
-    const botId = Number.parseInt(
-      randomUUID().replaceAll("-", "").slice(0, 12),
-      16,
-    );
-    const observedUrls: string[] = [];
-    let existingWebhookUrl = "";
-    let observedWebhook: Record<string, unknown> | null = null;
-    let observedCommands: Record<string, unknown> | null = null;
-    let observedWebhookDelete: Record<string, unknown> | null = null;
-    let observedCommandsDelete: Record<string, unknown> | null = null;
-    const providerFetch = vi.fn(
-      async (input: string | URL | Request, init?: RequestInit) => {
-        const url = String(input);
-        observedUrls.push(url);
-        if (url.endsWith("/getMe")) {
-          expect(init?.signal).toBeInstanceOf(AbortSignal);
-          return new Response(
-            JSON.stringify({
-              ok: true,
-              result: {
-                id: botId,
-                username: "maya_paperclip_bot",
-                first_name: "Maya",
+  it.each([undefined, "https://ingress.example"])(
+    "configures Telegram and preserves queued updates with webhook origin %s",
+    async (webhookPublicBaseUrl) => {
+      const fixture = await seedCompany();
+      const botToken = "123456:telegram-test-token";
+      const botId = Number.parseInt(
+        randomUUID().replaceAll("-", "").slice(0, 12),
+        16,
+      );
+      const observedUrls: string[] = [];
+      let existingWebhookUrl = "";
+      let observedWebhook: Record<string, unknown> | null = null;
+      let observedCommands: Record<string, unknown> | null = null;
+      let observedWebhookDelete: Record<string, unknown> | null = null;
+      let observedCommandsDelete: Record<string, unknown> | null = null;
+      const providerFetch = vi.fn(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const url = String(input);
+          observedUrls.push(url);
+          if (url.endsWith("/getMe")) {
+            expect(init?.signal).toBeInstanceOf(AbortSignal);
+            return new Response(
+              JSON.stringify({
+                ok: true,
+                result: {
+                  id: botId,
+                  username: "maya_paperclip_bot",
+                  first_name: "Maya",
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+          if (url.endsWith("/getWebhookInfo")) {
+            expect(init?.signal).toBeInstanceOf(AbortSignal);
+            return new Response(
+              JSON.stringify({ ok: true, result: { url: existingWebhookUrl } }),
+              {
+                status: 200,
+                headers: { "content-type": "application/json" },
               },
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        }
-        if (url.endsWith("/getWebhookInfo")) {
-          expect(init?.signal).toBeInstanceOf(AbortSignal);
-          return new Response(
-            JSON.stringify({ ok: true, result: { url: existingWebhookUrl } }),
-            {
+            );
+          }
+          if (url.endsWith("/setWebhook")) {
+            expect(init?.method).toBe("POST");
+            observedWebhook = JSON.parse(String(init?.body)) as Record<
+              string,
+              unknown
+            >;
+            existingWebhookUrl = String(observedWebhook.url ?? "");
+            return new Response(JSON.stringify({ ok: true, result: true }), {
               status: 200,
               headers: { "content-type": "application/json" },
-            },
-          );
-        }
-        if (url.endsWith("/setWebhook")) {
-          expect(init?.method).toBe("POST");
-          observedWebhook = JSON.parse(String(init?.body)) as Record<
-            string,
-            unknown
-          >;
-          existingWebhookUrl = String(observedWebhook.url ?? "");
-          return new Response(JSON.stringify({ ok: true, result: true }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (url.endsWith("/setMyCommands")) {
-          expect(init?.method).toBe("POST");
-          observedCommands = JSON.parse(String(init?.body)) as Record<
-            string,
-            unknown
-          >;
-          return new Response(JSON.stringify({ ok: true, result: true }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (url.endsWith("/deleteWebhook")) {
-          expect(init?.method).toBe("POST");
-          observedWebhookDelete = JSON.parse(String(init?.body)) as Record<
-            string,
-            unknown
-          >;
-          return new Response(JSON.stringify({ ok: true, result: true }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (url.endsWith("/deleteMyCommands")) {
-          expect(init?.method).toBe("POST");
-          observedCommandsDelete = JSON.parse(String(init?.body)) as Record<
-            string,
-            unknown
-          >;
-          return new Response(JSON.stringify({ ok: true, result: true }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        throw new Error(`Unexpected provider request: ${url}`);
-      },
-    ) as unknown as typeof globalThis.fetch;
-    const { runtime, service } = createService(
-      new FakeChatSdkRuntime(),
-      providerFetch,
-    );
-    const endpoint = await service.create(
-      fixture.companyId,
-      {
-        provider: "telegram",
-        assignedAgentId: fixture.assignedAgentId,
-      },
-      "owner-user",
-    );
-
-    const configured = await service.configure(
-      endpoint.id,
-      {
-        action: "configure",
-        credentials: { botToken },
-      },
-      "owner-user",
-    );
-
-    expect(observedUrls).toEqual([
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getMe`,
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getWebhookInfo`,
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setWebhook`,
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setMyCommands`,
-    ]);
-    expect(configured).toMatchObject({
-      status: "verifying",
-      providerAccountId: String(botId),
-      botExternalId: String(botId),
-      botUsername: "maya_paperclip_bot",
-      capabilities: { messageEdits: true, messageDeletes: false },
-      setup: { step: "test" },
-    });
-    const providerConfig = runtime.configurations.get(
-      endpoint.id,
-    )?.providerConfig;
-    expect(providerConfig).toMatchObject({
-      provider: "telegram",
-      credentials: { botToken, secretToken: expect.any(String) },
-    });
-    if (providerConfig?.provider !== "telegram")
-      throw new Error("Telegram runtime configuration was not created");
-    expect(observedWebhook).toEqual({
-      url: `https://paperclip.example/api/chat-webhooks/${endpoint.publicId}/telegram`,
-      secret_token: providerConfig.credentials.secretToken,
-      allowed_updates: [
-        "message",
-        "edited_message",
-        "callback_query",
-        "message_reaction",
-        "my_chat_member",
-      ],
-      drop_pending_updates: true,
-    });
-    expect(observedCommands).toEqual({
-      commands: [
-        { command: "task", description: "Start or continue a Paperclip task" },
-        { command: "status", description: "Show the active Paperclip task" },
-        {
-          command: "new",
-          description: "Start a new task after the current one",
+            });
+          }
+          if (url.endsWith("/setMyCommands")) {
+            expect(init?.method).toBe("POST");
+            observedCommands = JSON.parse(String(init?.body)) as Record<
+              string,
+              unknown
+            >;
+            return new Response(JSON.stringify({ ok: true, result: true }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (url.endsWith("/deleteWebhook")) {
+            expect(init?.method).toBe("POST");
+            observedWebhookDelete = JSON.parse(String(init?.body)) as Record<
+              string,
+              unknown
+            >;
+            return new Response(JSON.stringify({ ok: true, result: true }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (url.endsWith("/deleteMyCommands")) {
+            expect(init?.method).toBe("POST");
+            observedCommandsDelete = JSON.parse(String(init?.body)) as Record<
+              string,
+              unknown
+            >;
+            return new Response(JSON.stringify({ ok: true, result: true }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          throw new Error(`Unexpected provider request: ${url}`);
         },
-        { command: "close", description: "Close the active Paperclip task" },
-      ],
-    });
-    const [connection] = await db
-      .select({ refs: toolConnections.credentialSecretRefs })
-      .from(toolConnections)
-      .where(eq(toolConnections.id, endpoint.connectionId));
-    expect(connection.refs.map((ref) => ref.configPath).sort()).toEqual([
-      "credentials.botToken",
-      "credentials.webhookSecret",
-    ]);
+      ) as unknown as typeof globalThis.fetch;
+      const { runtime, service } = createService(
+        new FakeChatSdkRuntime(),
+        providerFetch,
+        { webhookPublicBaseUrl },
+      );
+      const endpoint = await service.create(
+        fixture.companyId,
+        {
+          provider: "telegram",
+          assignedAgentId: fixture.assignedAgentId,
+        },
+        "owner-user",
+      );
 
-    await db
-      .update(chatEndpoints)
-      .set({ status: "active", setup: { step: "complete" } })
-      .where(eq(chatEndpoints.id, endpoint.id));
-    existingWebhookUrl =
-      "https://expired.example/api/chat-webhooks/old-public-id/telegram";
-    observedUrls.length = 0;
-    observedWebhook = null;
-    observedCommands = null;
+      const configured = await service.configure(
+        endpoint.id,
+        {
+          action: "configure",
+          credentials: { botToken },
+        },
+        "owner-user",
+      );
 
-    const reconnected = await service.configure(
-      endpoint.id,
-      { action: "reconnect" },
-      "owner-user",
-    );
+      expect(observedUrls).toEqual([
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getMe`,
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getWebhookInfo`,
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setWebhook`,
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setMyCommands`,
+      ]);
+      expect(configured).toMatchObject({
+        status: "verifying",
+        providerAccountId: String(botId),
+        botExternalId: String(botId),
+        botUsername: "maya_paperclip_bot",
+        capabilities: { messageEdits: true, messageDeletes: false },
+        setup: { step: "test" },
+      });
+      const providerConfig = runtime.configurations.get(
+        endpoint.id,
+      )?.providerConfig;
+      expect(providerConfig).toMatchObject({
+        provider: "telegram",
+        credentials: { botToken, secretToken: expect.any(String) },
+      });
+      if (providerConfig?.provider !== "telegram")
+        throw new Error("Telegram runtime configuration was not created");
+      expect(observedWebhook).toEqual({
+        url: `${webhookPublicBaseUrl ?? "https://paperclip.example"}/api/chat-webhooks/${endpoint.publicId}/telegram`,
+        secret_token: providerConfig.credentials.secretToken,
+        allowed_updates: [
+          "message",
+          "edited_message",
+          "callback_query",
+          "message_reaction",
+          "my_chat_member",
+        ],
+        drop_pending_updates: true,
+      });
+      expect(observedCommands).toEqual({
+        commands: [
+          {
+            command: "task",
+            description: "Start or continue a Paperclip task",
+          },
+          { command: "status", description: "Show the active Paperclip task" },
+          {
+            command: "new",
+            description: "Start a new task after the current one",
+          },
+          { command: "close", description: "Close the active Paperclip task" },
+        ],
+      });
+      const [connection] = await db
+        .select({ refs: toolConnections.credentialSecretRefs })
+        .from(toolConnections)
+        .where(eq(toolConnections.id, endpoint.connectionId));
+      expect(connection.refs.map((ref) => ref.configPath).sort()).toEqual([
+        "credentials.botToken",
+        "credentials.webhookSecret",
+      ]);
 
-    expect(reconnected).toMatchObject({
-      status: "verifying",
-      setup: { step: "test" },
-    });
-    expect(observedUrls).toEqual([
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getMe`,
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getWebhookInfo`,
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setWebhook`,
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setMyCommands`,
-    ]);
-    expect(observedWebhook).toMatchObject({
-      url: `https://paperclip.example/api/chat-webhooks/${endpoint.publicId}/telegram`,
-      // Repointing an existing bot must retain updates Telegram queued while
-      // the old callback URL was unavailable.
-      drop_pending_updates: false,
-    });
+      await db
+        .update(chatEndpoints)
+        .set({ status: "active", setup: { step: "complete" } })
+        .where(eq(chatEndpoints.id, endpoint.id));
+      existingWebhookUrl =
+        "https://expired.example/api/chat-webhooks/old-public-id/telegram";
+      observedUrls.length = 0;
+      observedWebhook = null;
+      observedCommands = null;
 
-    await service.configure(endpoint.id, { action: "remove" }, "owner-user");
-    expect(observedWebhookDelete).toEqual({ drop_pending_updates: false });
-    expect(observedCommandsDelete).toEqual({});
-    expect(observedUrls.at(-2)).toBe(
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/deleteWebhook`,
-    );
-    expect(observedUrls.at(-1)).toBe(
-      `https://api.telegram.org/bot${encodeURIComponent(botToken)}/deleteMyCommands`,
-    );
-  });
+      const reconnected = await service.configure(
+        endpoint.id,
+        { action: "reconnect" },
+        "owner-user",
+      );
+
+      expect(reconnected).toMatchObject({
+        status: "verifying",
+        setup: { step: "test" },
+      });
+      expect(observedUrls).toEqual([
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getMe`,
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/getWebhookInfo`,
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setWebhook`,
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/setMyCommands`,
+      ]);
+      expect(observedWebhook).toMatchObject({
+        url: `${webhookPublicBaseUrl ?? "https://paperclip.example"}/api/chat-webhooks/${endpoint.publicId}/telegram`,
+        // Repointing an existing bot must retain updates Telegram queued while
+        // the old callback URL was unavailable.
+        drop_pending_updates: false,
+      });
+
+      await service.configure(endpoint.id, { action: "remove" }, "owner-user");
+      expect(observedWebhookDelete).toEqual({ drop_pending_updates: false });
+      expect(observedCommandsDelete).toEqual({});
+      expect(observedUrls.at(-2)).toBe(
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/deleteWebhook`,
+      );
+      expect(observedUrls.at(-1)).toBe(
+        `https://api.telegram.org/bot${encodeURIComponent(botToken)}/deleteMyCommands`,
+      );
+    },
+  );
 
   it("durably recovers rate-limited Telegram menu registration and removal cleanup", async () => {
     const fixture = await seedCompany();
@@ -9060,6 +9068,68 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await service.shutdown();
   });
 
+  it("separates verified webhook ingress from board identity links for every webhook provider", async () => {
+    const fixture = await seedCompany();
+    for (const publicBaseUrl of [
+      null,
+      "http://127.0.0.1:3103",
+      "https://board.example",
+    ]) {
+      const { service } = createService(
+        new FakeChatSdkRuntime(),
+        fakeSlackFetch(),
+        {
+          publicBaseUrl,
+          webhookPublicBaseUrl: "https://ingress.example",
+        },
+      );
+      for (const provider of [
+        "slack",
+        "github",
+        "microsoft-teams",
+        "telegram",
+      ] as const) {
+        const endpoint = await service.create(
+          fixture.companyId,
+          {
+            provider,
+            assignedAgentId: fixture.assignedAgentId,
+          },
+          "owner-user",
+        );
+        const callback = `https://ingress.example/api/chat-webhooks/${endpoint.publicId}/${provider}`;
+        expect(endpoint.setup).toMatchObject(
+          provider === "microsoft-teams"
+            ? { messagingEndpoint: callback }
+            : { webhookUrl: callback },
+        );
+        const [principal] = await db
+          .insert(chatExternalPrincipals)
+          .values({
+            companyId: fixture.companyId,
+            provider,
+            providerAccountId: "",
+            externalId: randomUUID(),
+            kind: "user",
+            isBot: false,
+          })
+          .returning();
+        const intent = await service.createLinkIntent(
+          endpoint.id,
+          principal.id,
+          1800,
+        );
+        expect(intent.confirmationUrl).toMatch(
+          new RegExp(
+            `^${publicBaseUrl ? publicBaseUrl.replaceAll(".", "\\.") : ""}/chat-identity/confirm\\?token=`,
+          ),
+        );
+        expect(intent.confirmationUrl).not.toContain("ingress.example");
+      }
+      await service.shutdown();
+    }
+  });
+
   it("tracks Slack callback surfaces independently and reports public URL drift", async () => {
     const fixture = await seedCompany();
     const { endpoint, runtime, service } =
@@ -9139,6 +9209,29 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         },
       },
     });
+
+    const boardOnlyMove = createService(
+      new FakeChatSdkRuntime(),
+      fakeSlackFetch(),
+      {
+        publicBaseUrl: "https://board-moved.example",
+        webhookPublicBaseUrl: "https://paperclip.example",
+      },
+    );
+    await expect(boardOnlyMove.service.get(endpoint.id)).resolves.toMatchObject(
+      {
+        setup: {
+          webhookUrl,
+          callbacksNeedUpdate: false,
+          callbackSurfaces: {
+            events: { status: "current" },
+            interactivity: { status: "current" },
+            slashCommands: { status: "current" },
+          },
+        },
+      },
+    );
+    await boardOnlyMove.service.shutdown();
 
     const rotated = createService(new FakeChatSdkRuntime(), fakeSlackFetch(), {
       publicBaseUrl: "https://rotated.example",
@@ -23106,25 +23199,30 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         { agentId: fixture.assignedAgentId },
       );
       // This suite intentionally leaves some retryable fixtures behind. Drain
-      // a bounded full-page backlog so this helper observes the question it
-      // just enqueued instead of assuming it is among the global oldest 25.
+      // a bounded full-page backlog so this helper does not assume its question
+      // is among the global oldest 25. A delivery scheduled by the preceding
+      // answer may concurrently claim this exact row, so await its durable
+      // published state instead of treating that in-flight claim as failure.
       await service.processPendingPublications(1_000);
-      const publication = await db
-        .select()
-        .from(chatPublications)
-        .where(
-          and(
-            eq(chatPublications.endpointId, endpoint.id),
-            eq(chatPublications.issueId, conversation.issueId),
-          ),
-        )
-        .then((rows) =>
-          rows.find(
-            (row) =>
-              row.payload.interactionId === interaction.id &&
-              row.state === "published",
-          ),
-        );
+      let publication: typeof chatPublications.$inferSelect | undefined;
+      await vi.waitFor(async () => {
+        publication = await db
+          .select()
+          .from(chatPublications)
+          .where(
+            and(
+              eq(chatPublications.endpointId, endpoint.id),
+              eq(chatPublications.issueId, conversation.issueId),
+            ),
+          )
+          .then((rows) =>
+            rows.find((row) => row.payload.interactionId === interaction.id),
+          );
+        expect(publication).toMatchObject({
+          state: "published",
+          providerMessageId: expect.any(String),
+        });
+      });
       if (!publication?.providerMessageId)
         throw new Error("Telegram question publication was not delivered");
       const action = publication.payload.card?.actions?.find(

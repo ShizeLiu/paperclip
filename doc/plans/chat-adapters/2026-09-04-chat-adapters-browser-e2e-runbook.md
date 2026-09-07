@@ -32,7 +32,19 @@ Direct verified webhooks are the required transport for Slack, GitHub, Teams, an
 
 A webhook provider is not deployment-qualified merely because it passed through a temporary tunnel. Live development may use an ephemeral HTTPS tunnel to find product defects, but stable release evidence requires a durable public ingress origin whose callback URLs survive process restarts and whose Paperclip secrets master key is preserved with the instance.
 
-### Current qualification snapshot — 2026-09-06
+### Current setup gates — 2026-09-07 UTC
+
+GitHub App creation and sudo confirmation have completed; its PEM and repository
+installation are still required. Discord App creation completed and the operator
+reported the Clawd installation; Paperclip still needs the bot token, and the
+browser session needs renewed login for provider-side proof. Slack and Telegram
+require replacement of the previously exposed test tokens. Teams still requires
+an eligible work/school tenant and its admin-controlled setup. See the
+[live qualification addendum](./2026-09-06-live-qualification-addendum.md) for the
+latest verified code, isolated ingress, and exact evidence. None is a complete
+current-source live qualification.
+
+### Historical qualification snapshot — 2026-09-06
 
 - **Evidence baseline:** committed revision `a534e07a6` pins the current evidence ledger. Its implementation parent `83018c688` contains the Discord log-redaction and setup-copy corrections. Parent merge `da8f83d6c9befe7bf958f6d9cf12a95fc7e59e88` passed the five-provider deterministic browser suite plus the focused merged-build live checks described below; `83018c688` then passed the 42-test Discord adapter/runtime subset, the 34-test Discord/OpenAPI/UI contract subset, and server/UI typechecks. Working-tree fixes made after this checkpoint remain deterministic evidence until the combined suite and relevant provider scenario are rerun.
 - **Slack:** broad live evidence covers one-root/one-thread/one-task behavior, DM answer continuation, ordered follow-ups, exact final presentation, reaction add/remove, lifecycle edits/deletes, files, pause/resume, disabled-resource recovery, and one identity revocation/relink sequence. On the merged build, exact responses `SLACK-MERGED-C-0906` and `SLACK-MERGED-D-0906` passed on healthy ingress, while delayed-event recovery delivered `SLACK-MERGED-A-0906` and `SLACK-MERGED-B-0906` in order after tunnel rotation. Revocation created low-trust quarantined task `CHA-88` and failed closed without inheriting linked authority; after relinking and starting a fresh generation, `CHA-89` reached `done` with exact `SLACK-LINK-RESTORED-0906`. The retest also showed that Slack's Events API, Interactivity, and slash-command callback URLs can drift independently: updating only two left the command on an expired URL until it was repaired. It is not a complete S1–S7 pass; the rest of the governance matrix, injected ambiguous delivery, reinstall, and cleanup remain incomplete.
@@ -215,7 +227,7 @@ Before starting a provider run:
 2. Confirm `Maya E2E` is active and that its deterministic fixture contract passes from an ordinary Paperclip task.
 3. Confirm the provider installer, Ari, and Jules browser sessions are signed into the intended sandbox accounts.
 4. Confirm the provider test resources contain no production data and that prior run messages/issues can be distinguished by run ID.
-5. Confirm the Paperclip instance is publicly reachable for direct verified webhooks when qualifying Slack, GitHub, Teams, or Telegram. For Discord, confirm outbound HTTPS/WebSocket access to Discord instead. Relay qualification is a separate deployment run described in section 10.
+5. Confirm the verified webhook ingress is publicly reachable when qualifying Slack, GitHub, Teams, or Telegram. For a private board, set `PAPERCLIP_CHAT_WEBHOOK_PUBLIC_URL` to the HTTPS webhook-only origin and keep `PAPERCLIP_PUBLIC_URL` at the real board origin. Public `POST /api/chat-webhooks/*` may be forwarded; the private board/API must not be. Verify external task links use the board, never the webhook-only host; local/private links should be omitted with neutral instructions. For Discord, confirm outbound HTTPS/WebSocket access to Discord instead. Relay qualification is a separate deployment run described in section 10.
 6. Confirm the connection does not already exist. If it does, remove the stale test connection through the UI and verify its historical tasks remain readable before creating the new connection. Separately inspect the provider installation: Paperclip removal does not uninstall it, except that Telegram webhook/menu cleanup is automatic.
 7. Start browser recording/screenshots before `/apps`; record the Paperclip SHA and current time.
 
@@ -442,7 +454,7 @@ Run before stable release and after any GitHub permission, event, or identity ch
 5. Under repository permissions, set **Metadata: read**, **Issues: read and write**, and **Pull requests: read and write**. Leave Contents, Actions, Administration, and organization permissions at **No access**.
 6. Subscribe only to the selectable **Issue comment** and **Pull request review comment** events. GitHub sends **Installation** and **Installation repositories** to every GitHub App automatically, so they do not appear as subscription controls. Save the App.
 7. Return to Paperclip and wait for **GitHub has verified this webhook.** A correctly signed GitHub `ping` must set this state; an unsigned or incorrectly signed `ping` must not. **Connect and verify** remains disabled until this proof arrives.
-8. Copy the numeric **App ID** into Paperclip. Under **Private keys**, generate a key, open the downloaded PEM locally, and paste it into Paperclip's write-only private-key field without recording or screenshotting it.
+8. Copy the numeric **App ID** into Paperclip. Under **Private keys**, generate and retain the downloaded PEM, then use **Choose .pem file** in Paperclip (or paste the multiline key into its masked field). Confirm the loaded state without revealing, recording, or screenshotting the key. Empty, unreadable, or over-64-KiB files should show a safe inline error; imports must preserve line breaks and never upload a file separately from the credential setup request.
 9. In GitHub, click **Install App**, select the sandbox organization, choose **Only select repositories**, and grant the two test repositories.
 10. Return to Paperclip and click **Connect and verify**. Paperclip must verify the App identity without displaying the secret or private key again.
 11. In `paperclip-chat-e2e-enabled`, open a new issue titled `<run-id> setup`, comment `@<verified-bot-login> ECHO <run-id>-SETUP`, then add an unmentioned follow-up comment.

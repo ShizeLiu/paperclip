@@ -390,3 +390,50 @@ None of these gates is represented as a successful live conversation.
 - The GitHub Paperclip form has App ID `4853886` filled in and still needs the
   operator's PEM. The Discord form retains its known application/server IDs and
   still needs the bot token. This does not establish a successful agent run.
+
+### Webhook/board separation and credential-entry polish — 2026-09-07 UTC
+
+- A live-readiness audit found that a webhook-only tunnel was also being used
+  as the board origin. That produced valid-looking Paperclip links whose host
+  intentionally returned 404. `PAPERCLIP_CHAT_WEBHOOK_PUBLIC_URL` now controls
+  only provider callback URLs; the board origin still controls authentication,
+  identity confirmation, task links, and trusted hosts. Invalid explicit ingress
+  URLs refuse startup without echoing their value. Local/private task links are
+  omitted with neutral instructions, not redirected to ingress or displayed as
+  `[link removed]`. Config-file-only board URLs work for question cards too.
+- GitHub setup now imports a downloaded PEM directly into the in-memory
+  credential field, with a 64-KiB limit, persistent safe errors, and revision
+  fencing against slower file reads, later paste, and unmount/provider changes.
+  Connect is disabled during import. A real deterministic browser check caught
+  the previous CSS-masked textarea exposing its contents as page text. The
+  default is now a password input; an actual multiline textarea exists only
+  during explicit reveal. Both pasted and imported PEMs reach configure
+  byte-for-byte. Only synthetic keys were involved in this test.
+- Discord component denials now send one fixed private remediation after the
+  denial is durable and before the acknowledgement deadline. Duplicate accepted
+  callbacks still acknowledge normally; late denials do not respond; reply
+  failure is not retried or logged with provider content.
+- The first combined integration run was 250/251. Its Telegram helper raced a
+  concurrently scheduled terminal-card drain: the requested next question was
+  subsequently published once, nine milliseconds after creation, with one
+  attempt and no delivery error. The helper now waits for its own durable
+  publication state; no production retry/ordering rule or timeout was weakened.
+
+Final combined verification for these changes:
+
+- **251/251** full chat integration tests, zero skips, on fresh database
+  `chat_adapters_test_20260907_origin_verified`.
+- **83/83** focused server/config/provider/link tests and **14/14** focused UI
+  tests; **5/5** deterministic browser cases, including the actual file chooser,
+  imported/pasted credential payloads, reveal/hide, and error recovery.
+- Shared, server, and UI typechecks passed. Design token gates and diff checks
+  passed. The broad workspace suite was not rerun and is not claimed green.
+- Reports are retained under `.paperclip-runtime/chat-adapters-live/` as
+  `origin-verified-integration.json`, `origin-final-unit.json`,
+  `origin-verified-ui-unit.json`, and `origin-verified-browser.log`.
+
+These checks do not replace live provider qualification. Discord still needs a
+bot token entered into Paperclip and a renewed provider login; GitHub needs its
+PEM and repository installation. Slack's signed-in OAuth page is reachable but
+its exposed test token still requires replacement and write-only entry. Telegram
+and Teams retain their previously documented rotation and tenant gates.

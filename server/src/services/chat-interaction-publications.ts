@@ -16,7 +16,9 @@ import type {
   RequestConfirmationInteraction,
   SafeExternalChatCardAction,
 } from "@paperclipai/shared";
+import { readConfigFile } from "../config-file.js";
 import { projectSafeChatPublication } from "./chat-publication-projection.js";
+import { safeChatTaskUrl } from "./chat-task-url.js";
 import {
   chatQuestionFormActionRecords,
   createChatQuestionFormDraft,
@@ -109,22 +111,15 @@ function terminalNativeInteractionCopy(
   return null;
 }
 
-function publicTaskUrl(issueId: string): string | null {
+export function publicChatInteractionTaskUrl(issueId: string): string | null {
   const configured =
-    process.env.PAPERCLIP_PUBLIC_URL?.trim() ||
     process.env.PAPERCLIP_AUTH_PUBLIC_BASE_URL?.trim() ||
-    process.env.BETTER_AUTH_BASE_URL?.trim();
-  if (!configured) return null;
-  try {
-    const url = new URL(configured);
-    if (url.protocol !== "https:") return null;
-    url.pathname = `/issues/${issueId}`;
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return null;
-  }
+    process.env.BETTER_AUTH_URL?.trim() ||
+    process.env.BETTER_AUTH_BASE_URL?.trim() ||
+    process.env.PAPERCLIP_PUBLIC_URL?.trim() ||
+    readConfigFile()?.auth?.publicBaseUrl?.trim() ||
+    process.env.PAPERCLIP_MANAGED_RUNTIME_PUBLIC_URL?.trim();
+  return safeChatTaskUrl(configured, issueId);
 }
 
 /**
@@ -296,7 +291,7 @@ export async function enqueueIssueInteractionChatPublications(
     );
   if (bindings.length === 0) return [];
 
-  const taskUrl = publicTaskUrl(interaction.issueId);
+  const taskUrl = publicChatInteractionTaskUrl(interaction.issueId);
   const question =
     interaction.kind === "ask_user_questions"
       ? nativeChatQuestion(interaction)

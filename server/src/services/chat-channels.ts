@@ -84,6 +84,7 @@ import {
   normalizeUploadAttachmentContentType,
 } from "../attachment-types.js";
 import { isUniqueViolation } from "../db-errors.js";
+import { parseChatWebhookPublicBaseUrl } from "../chat-webhook-public-url.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { redactSensitiveText } from "../redaction.js";
@@ -114,6 +115,7 @@ import {
 } from "./issue-assignment-wakeup.js";
 import { issueService } from "./issues.js";
 import { projectSafeChatPublication } from "./chat-publication-projection.js";
+import { safeChatTaskUrl } from "./chat-task-url.js";
 import { getExternalChannelBindingSummary } from "./chat-channel-binding.js";
 import {
   discoverDedicatedGitHubAppInstallation,
@@ -909,6 +911,8 @@ export interface ChatChannelServiceOptions {
   /** Production bridge for resuming a native run that owns the question. */
   resolveNativeQuestion?: QuestionResponseDeliveryServiceOptions["resolveNativeQuestion"];
   publicBaseUrl?: string | null;
+  /** Optional verified ingress origin; never used for board or identity links. */
+  webhookPublicBaseUrl?: string | null;
   runtime?: ChatSdkRuntime;
   /** Testable scheduler hook; production defaults to the next event-loop turn. */
   scheduleDeferredWork?: (task: () => void) => void;
@@ -2184,6 +2188,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const persistence = createChatSdkStatePersistence(db);
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const publicBaseUrl = absoluteBaseUrl(options.publicBaseUrl);
+  const webhookPublicBaseUrl =
+    parseChatWebhookPublicBaseUrl(options.webhookPublicBaseUrl) ??
+    publicBaseUrl;
   const issuesSvc = issueService(db);
   const secrets = secretService(db);
   const questionResponses = questionResponseDeliveryService(db, {
@@ -4573,7 +4580,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       replyMode: "subscribed",
       capabilities: endpoint.capabilities,
       setup: {
-        ...providerSetupState(endpoint, publicBaseUrl, row.assignedAgentName),
+        ...providerSetupState(
+          endpoint,
+          webhookPublicBaseUrl,
+          row.assignedAgentName,
+        ),
         ...(endpoint.provider === "github"
           ? {
               webhookSecretConfigured: row.credentialSecretRefs.some(
@@ -6976,7 +6987,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     ) {
       throw unprocessable("Unsupported chat endpoint setup action");
     }
-    if (!publicBaseUrl && endpoint.provider !== "discord") {
+    if (!webhookPublicBaseUrl && endpoint.provider !== "discord") {
       throw unprocessable(
         `A public HTTPS Paperclip URL is required before connecting ${PROVIDER_LABELS[endpoint.provider]}`,
       );
@@ -7243,8 +7254,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         waitForDiscordOwnership: next.endpoint.provider === "discord",
       });
 
-      if (endpoint.provider === "telegram" && publicBaseUrl) {
-        const webhookUrl = `${publicBaseUrl}/api/chat-webhooks/${endpoint.publicId}/telegram`;
+      if (endpoint.provider === "telegram" && webhookPublicBaseUrl) {
+        const webhookUrl = `${webhookPublicBaseUrl}/api/chat-webhooks/${endpoint.publicId}/telegram`;
         const infoResponse = await fetchImpl(
           `https://api.telegram.org/bot${encodeURIComponent(credentials.botToken)}/getWebhookInfo`,
           { signal: AbortSignal.timeout(PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS) },
@@ -20989,10 +21000,13 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           files = uploads;
         }
       } else {
-        const baseUrl = absoluteBaseUrl(options.publicBaseUrl);
+        const taskUrl = safeChatTaskUrl(
+          options.publicBaseUrl,
+          input.publication.issueId,
+        );
         text = `${text}\n\n${
-          baseUrl
-            ? `Open the task in Paperclip: ${baseUrl}/issues/${input.publication.issueId}`
+          taskUrl
+            ? `Open the task in Paperclip: ${taskUrl}`
             : "Open the task in Paperclip to download the attachment."
         }`;
       }

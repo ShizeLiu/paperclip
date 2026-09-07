@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ExternalLink, Eye, EyeOff, Loader2 } from "lucide-react";
 import { AgentSelect } from "@/components/AgentMultiSelect";
@@ -18,6 +26,10 @@ import {
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { isAgentStatusInvokable } from "@paperclipai/shared";
 import { sanitizedSetupErrorMessage } from "./chat-setup-error";
+import {
+  createGitHubPrivateKeyReadGuard,
+  readGitHubPrivateKeyFile,
+} from "./github-private-key-file";
 
 const providerNames: Record<ChatProvider, string> = {
   slack: "Slack",
@@ -358,6 +370,7 @@ export function ChatEndpointSetup() {
               </div>
             ) : null}
             <ProviderConnectStep
+              key={`${provider}:${endpoint.id}`}
               provider={provider}
               agentName={selectedAgent?.name ?? endpoint.assignedAgentName}
               endpoint={endpoint}
@@ -411,7 +424,7 @@ function ProviderConnectStep({
   agentName: string;
   endpoint: ChatEndpoint;
   credentials: Record<string, string>;
-  setCredentials: (next: Record<string, string>) => void;
+  setCredentials: Dispatch<SetStateAction<Record<string, string>>>;
   repairing: boolean;
   pending: boolean;
   generatedWebhookSecret: string;
@@ -453,6 +466,55 @@ function ProviderConnectStep({
   );
   const [manifestCopied, setManifestCopied] = useState(false);
   const [privateKeyVisible, setPrivateKeyVisible] = useState(false);
+  const [privateKeyFileError, setPrivateKeyFileError] = useState<string | null>(
+    null,
+  );
+  const [privateKeyFileLoaded, setPrivateKeyFileLoaded] = useState(false);
+  const [privateKeyFileLoading, setPrivateKeyFileLoading] = useState(false);
+  const privateKeyFileInputRef = useRef<HTMLInputElement>(null);
+  const privateKeyReadGuard = useRef(
+    createGitHubPrivateKeyReadGuard(),
+  ).current;
+  useEffect(
+    () => () => {
+      privateKeyReadGuard.invalidate();
+    },
+    [privateKeyReadGuard],
+  );
+  const loadPrivateKeyFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    const readRevision = privateKeyReadGuard.start();
+    setPrivateKeyFileError(null);
+    setPrivateKeyFileLoaded(false);
+    setPrivateKeyFileLoading(true);
+    try {
+      const privateKey = await readGitHubPrivateKeyFile(file);
+      if (!privateKeyReadGuard.isCurrent(readRevision)) return;
+      setCredentials((current) => ({ ...current, privateKey }));
+      setPrivateKeyVisible(false);
+      setPrivateKeyFileLoaded(true);
+    } catch (error) {
+      if (!privateKeyReadGuard.isCurrent(readRevision)) return;
+      setPrivateKeyFileError(
+        error instanceof Error
+          ? error.message
+          : "Paperclip couldn't read that file. Choose the .pem file again or paste the private key.",
+      );
+    } finally {
+      if (privateKeyReadGuard.isCurrent(readRevision)) {
+        setPrivateKeyFileLoading(false);
+      }
+    }
+  };
+  const replacePrivateKey = (privateKey: string) => {
+    privateKeyReadGuard.invalidate();
+    setPrivateKeyFileError(null);
+    setPrivateKeyFileLoaded(false);
+    setPrivateKeyFileLoading(false);
+    setCredentials((current) => ({ ...current, privateKey }));
+  };
   const slackCommand =
     endpoint.setup?.command ??
     `/${
@@ -993,24 +1055,29 @@ settings:
           <ExternalLink />
         </Button>
         {field("appId", "GitHub App ID", "text")}
-        <label className="grid gap-2 text-sm font-medium">
-          Private key (PEM)
+        <div className="grid gap-2 text-sm font-medium">
+          <label htmlFor="github-private-key">Private key (PEM)</label>
           <div className="relative">
-            <Textarea
-              className="min-h-24 pr-11 font-mono text-xs"
-              style={
-                privateKeyVisible
-                  ? undefined
-                  : ({ WebkitTextSecurity: "disc" } as CSSProperties)
-              }
-              value={credentials.privateKey ?? ""}
-              onChange={(event) =>
-                setCredentials({
-                  ...credentials,
-                  privateKey: event.target.value,
-                })
-              }
-            />
+            {privateKeyVisible ? (
+              <Textarea
+                id="github-private-key"
+                className="min-h-24 pr-11 font-mono text-xs"
+                value={credentials.privateKey ?? ""}
+                onChange={(event) => replacePrivateKey(event.target.value)}
+              />
+            ) : (
+              <Input
+                id="github-private-key"
+                type="password"
+                className="pr-11 font-mono text-xs"
+                value={credentials.privateKey ?? ""}
+                onChange={(event) => replacePrivateKey(event.target.value)}
+                onPaste={(event) => {
+                  event.preventDefault();
+                  replacePrivateKey(event.clipboardData.getData("text"));
+                }}
+              />
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -1024,7 +1091,46 @@ settings:
               {privateKeyVisible ? <EyeOff /> : <Eye />}
             </Button>
           </div>
-        </label>
+          <input
+            ref={privateKeyFileInputRef}
+            type="file"
+            accept=".pem,.key,application/x-pem-file,application/pkcs8,text/plain"
+            className="hidden"
+            aria-label="Choose GitHub App private key file"
+            onChange={loadPrivateKeyFile}
+          />
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => privateKeyFileInputRef.current?.click()}
+            >
+              Choose .pem file
+            </Button>
+          </div>
+          {privateKeyFileError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {privateKeyFileError}
+            </p>
+          ) : null}
+          {privateKeyFileLoading ? (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm text-muted-foreground"
+            >
+              Reading private key file…
+            </p>
+          ) : privateKeyFileLoaded ? (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm text-muted-foreground"
+            >
+              Private key loaded. It stays in this form until you connect.
+            </p>
+          ) : null}
+        </div>
         <div className="grid gap-2">
           <p className="text-sm font-medium">Webhook secret</p>
           {generatedWebhookSecret ? (
@@ -1101,6 +1207,7 @@ settings:
             !endpoint.setup?.webhookSecretConfigured ||
             !endpoint.setup?.webhookVerifiedAt ||
             !endpoint.setup?.webhookUrl ||
+            privateKeyFileLoading ||
             generatingSetupSecret ||
             pending
           }

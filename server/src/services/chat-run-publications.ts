@@ -22,6 +22,7 @@ import {
   issueComments,
 } from "@paperclipai/db";
 import { projectSafeChatPublication } from "./chat-publication-projection.js";
+import { safeChatTaskUrl } from "./chat-task-url.js";
 import { hasChatRunOwnedProviderInteraction } from "./chat-interaction-arbitration.js";
 import { CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON } from "./heartbeat-run-summary.js";
 import { resolveChatOriginPublicationBindings } from "./issues.js";
@@ -93,15 +94,7 @@ export function safeMilestoneText(input: {
     return `${input.agentName} completed this turn.`;
   if (input.errorCode === "slack_session_stopped")
     return `${input.agentName} stopped at your request.`;
-  let taskUrl: string | null = null;
-  if (input.publicBaseUrl) {
-    try {
-      const origin = new URL(input.publicBaseUrl).origin;
-      taskUrl = `${origin}/issues/${input.issueId}`;
-    } catch {
-      taskUrl = null;
-    }
-  }
+  const taskUrl = safeChatTaskUrl(input.publicBaseUrl, input.issueId);
   const recovery =
     input.errorCode === "low_trust_isolation_unavailable"
       ? `${input.agentName} couldn't safely start this turn because this task was started for an unlinked external guest and isolated guest execution isn't available. Link your identity to Paperclip, then start a new task; or ask a Paperclip admin to enable isolated guest execution.`

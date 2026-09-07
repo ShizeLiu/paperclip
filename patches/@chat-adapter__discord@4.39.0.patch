@@ -334,7 +334,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        userId: user.id,
        channelId
      });
-@@ -1325,8 +1394,18 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1325,8 +1394,35 @@ var DiscordAdapter = class _DiscordAdapter {
      }
      if (interaction.isMessageComponent()) {
 -      await interaction.deferUpdate();
@@ -346,17 +346,34 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
 +      // resolution publication updates the card even though this click is not
 +      // misleadingly acknowledged after the provider deadline.
 +      const acknowledgementStartedAt = Date.now();
++      let durablyRejected = false;
 +      const admitted = await this.processGatewayWithRetry(
-+        () => this.handleComponentInteraction(
-+          this.normalizeGatewayComponentInteraction(interaction)
-+        ),
++        async () => {
++          try {
++            await this.handleComponentInteraction(
++              this.normalizeGatewayComponentInteraction(interaction)
++            );
++          } catch (error) {
++            if (error && typeof error === "object" && "code" in error && error.code === "chat_discord_gateway_action_rejected") {
++              durablyRejected = true;
++            }
++            throw error;
++          }
++        },
 +        { event: "interaction", messageId: interaction.message.id },
 +        { deadlineAt: acknowledgementStartedAt + 2500 }
        );
-+      if (admitted) await interaction.deferUpdate();
++      if (admitted) {
++        await interaction.deferUpdate();
++      } else if (durablyRejected && Date.now() < acknowledgementStartedAt + 2500) {
++        await interaction.reply({
++          content: "This action is no longer available. Open the linked Paperclip task or ask an operator to link this account.",
++          flags: DiscordInteractionResponseFlag.Ephemeral
++        });
++      }
      }
    }
-@@ -1340,7 +1412,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1340,7 +1429,7 @@ var DiscordAdapter = class _DiscordAdapter {
          options: this.normalizeGatewayCommandOptions(interaction.options.data),
          type: interaction.commandType
        },
@@ -365,7 +382,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        id: interaction.id,
        token: interaction.token,
        type: interaction.type,
-@@ -1359,7 +1431,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1359,7 +1448,7 @@ var DiscordAdapter = class _DiscordAdapter {
          custom_id: interaction.customId,
          values
        },
@@ -374,7 +391,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        id: interaction.id,
        message: { id: interaction.message.id },
        token: interaction.token,
-@@ -1467,7 +1539,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1467,7 +1556,7 @@ var DiscordAdapter = class _DiscordAdapter {
          }
        } catch (error) {
          this.logger.error("Failed to fetch thread parent", {
@@ -383,7 +400,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
            channelId
          });
        }
-@@ -1478,21 +1550,47 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1478,21 +1567,47 @@ var DiscordAdapter = class _DiscordAdapter {
      );
      const isEveryoneMentioned = this.respondToGlobalMentions && data.mention_everyone === true;
      const isMentioned = isUserMentioned || isRoleMentioned || isEveryoneMentioned || !data.author.bot && this.respondToChannelIds.includes(parentChannelId);
@@ -445,7 +462,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
      }
      const threadId = this.encodeThreadId({
        guildId,
-@@ -1537,7 +1635,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1537,7 +1652,7 @@ var DiscordAdapter = class _DiscordAdapter {
        await this.chat.handleIncomingMessage(this, threadId, chatMessage);
      } catch (error) {
        this.logger.error("Error handling forwarded message", {
@@ -454,7 +471,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
          messageId: data.id
        });
      }
-@@ -1575,7 +1673,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1575,7 +1690,7 @@ var DiscordAdapter = class _DiscordAdapter {
            }
          } catch (error) {
            this.logger.error("Failed to fetch thread parent for reaction", {
@@ -463,7 +480,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
              channelId
            });
          }
-@@ -1590,7 +1688,10 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1590,7 +1705,10 @@ var DiscordAdapter = class _DiscordAdapter {
      const normalizedEmoji = this.normalizeDiscordEmoji(emojiName);
      const userInfo = data.user ?? data.member?.user;
      if (!userInfo) {
@@ -475,7 +492,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        return;
      }
      const reactionEvent = {
-@@ -1794,12 +1895,12 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1794,12 +1912,12 @@ var DiscordAdapter = class _DiscordAdapter {
    /**
     * Create a Discord thread from a message.
     */
@@ -491,7 +508,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
      });
      try {
        const response = await this.discordFetch(
-@@ -1814,7 +1915,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1814,7 +1932,7 @@ var DiscordAdapter = class _DiscordAdapter {
        const result = await response.json();
        this.logger.debug("Discord API: POST thread response", {
          threadId: result.id,
@@ -500,7 +517,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        });
        return result;
      } catch (error) {
-@@ -1828,6 +1929,18 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1828,6 +1946,18 @@ var DiscordAdapter = class _DiscordAdapter {
        throw error;
      }
    }
@@ -519,7 +536,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
    /**
     * Truncate content to Discord's maximum length.
     */
-@@ -1861,20 +1974,23 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1861,20 +1991,23 @@ var DiscordAdapter = class _DiscordAdapter {
        formData.append(`files[${i}]`, blob, file.filename);
      }
      const response = await fetch(
@@ -549,7 +566,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        );
      }
      const result = await response.json();
-@@ -1885,22 +2001,29 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1885,22 +2018,29 @@ var DiscordAdapter = class _DiscordAdapter {
      };
    }
    async discordInteractionFetch(path, method, body) {
@@ -589,7 +606,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        );
      }
      return response;
-@@ -1924,21 +2047,28 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -1924,21 +2064,28 @@ var DiscordAdapter = class _DiscordAdapter {
        });
        formData.append(`files[${i}]`, blob, file.filename);
      }
@@ -627,7 +644,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        );
      }
      return response;
-@@ -2299,19 +2429,20 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2299,19 +2446,20 @@ var DiscordAdapter = class _DiscordAdapter {
      const response = await fetch(url, {
        method,
        headers,
@@ -654,7 +671,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
          new DiscordApiError(response.status, errorText)
        );
      }
-@@ -2372,9 +2503,16 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2372,9 +2520,16 @@ var DiscordAdapter = class _DiscordAdapter {
          GatewayIntentBits.GuildMessageReactions,
          GatewayIntentBits.DirectMessageReactions
        ],
@@ -672,7 +689,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
      if (webhookUrl) {
        client.on("raw", async (packet) => {
          if (isShuttingDown) {
-@@ -2395,7 +2533,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2395,7 +2550,7 @@ var DiscordAdapter = class _DiscordAdapter {
                  "Failed to resolve forwarded message channel",
                  {
                    channelId: message.channel_id,
@@ -681,7 +698,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
                  }
                );
                return null;
-@@ -2419,45 +2557,111 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2419,45 +2574,111 @@ var DiscordAdapter = class _DiscordAdapter {
      }
      client.on(Events.ClientReady, () => {
        this.logger.info("Discord Gateway connected", {
@@ -821,7 +838,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        client.destroy();
        this.logger.info("Discord Gateway listener stopped");
      }
-@@ -2474,7 +2678,6 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2474,7 +2695,6 @@ var DiscordAdapter = class _DiscordAdapter {
        if (message.author.bot) {
          this.logger.debug("Ignoring message from bot", {
            authorId: message.author.id,
@@ -829,7 +846,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
            isMe: message.author.id === client.user?.id
          });
          return;
-@@ -2498,11 +2701,41 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2498,11 +2718,41 @@ var DiscordAdapter = class _DiscordAdapter {
          isUserMentioned,
          isRoleMentioned,
          isEveryoneMentioned,
@@ -873,7 +890,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
      client.on(Events.InteractionCreate, async (interaction) => {
        if (isShuttingDown()) {
          this.logger.debug("Ignoring interaction - Gateway is shutting down");
-@@ -2516,7 +2744,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2516,7 +2761,7 @@ var DiscordAdapter = class _DiscordAdapter {
          await this.handleGatewayInteraction(interaction);
        } catch (error) {
          this.logger.error("Error handling Gateway interaction", {
@@ -882,7 +899,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
            interactionId: interaction.id
          });
        }
-@@ -2526,26 +2754,23 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2526,26 +2771,23 @@ var DiscordAdapter = class _DiscordAdapter {
          this.logger.debug("Ignoring reaction - Gateway is shutting down");
          return;
        }
@@ -925,7 +942,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
      });
      client.on(Events.MessageReactionRemove, async (reaction, user) => {
        if (isShuttingDown()) {
-@@ -2554,26 +2779,23 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2554,26 +2796,23 @@ var DiscordAdapter = class _DiscordAdapter {
          );
          return;
        }
@@ -968,7 +985,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
      });
    }
    /**
-@@ -2584,14 +2806,15 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2584,14 +2823,15 @@ var DiscordAdapter = class _DiscordAdapter {
        const botToken = await this.resolveBotToken();
        this.logger.debug("Forwarding Gateway event to webhook", {
          type: event.type,
@@ -986,7 +1003,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
 +        signal: AbortSignal.timeout(DISCORD_REQUEST_TIMEOUT_MS)
        });
        if (response.ok) {
-@@ -2603,13 +2825,13 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2603,13 +2842,13 @@ var DiscordAdapter = class _DiscordAdapter {
          this.logger.error("Failed to forward Gateway event", {
            type: event.type,
            status: response.status,
@@ -1002,7 +1019,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        });
      }
    }
-@@ -2629,33 +2851,96 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2629,33 +2868,96 @@ var DiscordAdapter = class _DiscordAdapter {
        discordThreadId = channelId;
        parentChannelId = message.channel.parentId;
      }
@@ -1114,7 +1131,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
        id: message.id,
        threadId,
        text: content.text,
-@@ -2684,8 +2969,8 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2684,8 +2986,8 @@ var DiscordAdapter = class _DiscordAdapter {
        ),
        raw: {
          id: message.id,
@@ -1125,7 +1142,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
          content: message.content,
          author: {
            id: message.author.id,
-@@ -2696,14 +2981,95 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2696,14 +2998,95 @@ var DiscordAdapter = class _DiscordAdapter {
        // Add isMention flag for the chat handlers
        isMention: isMentioned
      });
@@ -1228,7 +1245,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
    }
    /**
     * Handle a reaction received via the Gateway WebSocket.
-@@ -2716,7 +3063,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2716,7 +3080,7 @@ var DiscordAdapter = class _DiscordAdapter {
      const channelId = reaction.message.channelId;
      const isInThread = reaction.message.channel?.isThread?.();
      let parentChannelId = channelId;
@@ -1237,7 +1254,7 @@ index a42b61d58aa05c553cad8544090284070973cf0a..47ec7caee95cce5fa949a6dfd4e988c3
      if (isInThread && reaction.message.channel?.parentId) {
        discordThreadId = channelId;
        parentChannelId = reaction.message.channel.parentId;
-@@ -2751,7 +3098,7 @@ var DiscordAdapter = class _DiscordAdapter {
+@@ -2751,7 +3115,7 @@ var DiscordAdapter = class _DiscordAdapter {
          user_id: user.id
        }
      };

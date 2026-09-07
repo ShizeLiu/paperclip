@@ -18,6 +18,11 @@ import {
 
 type Provider = "slack" | "github" | "discord" | "microsoft-teams" | "telegram";
 
+const GITHUB_PRIVATE_KEY_FIXTURE =
+  "-----BEGIN PRIVATE KEY-----\nlocal-e2e-key\n-----END PRIVATE KEY-----\n";
+const GITHUB_PRIVATE_KEY_PASTE_FIXTURE =
+  "-----BEGIN PRIVATE KEY-----\nlocal-e2e-pasted-key\n-----END PRIVATE KEY-----\n";
+
 type ProviderCase = {
   provider: Provider;
   slug: string;
@@ -301,6 +306,8 @@ function endpointFixture(provider: ProviderCase, seed: Seed) {
 type ChatMock = {
   createdWithAgentId: string | null;
   configuredCredentialKeys: string[];
+  githubPrivateKeyMatchedFile: boolean | null;
+  githubPrivateKeyMatchedPaste: boolean | null;
   setupAttempts: number;
   updatedResource: boolean;
   resourceUpdates: Array<Array<{ id: string; enabled: boolean }>>;
@@ -325,6 +332,8 @@ async function installChatControlPlaneMock(
     created: false,
     createdWithAgentId: null,
     configuredCredentialKeys: [],
+    githubPrivateKeyMatchedFile: null,
+    githubPrivateKeyMatchedPaste: null,
     setupAttempts: 0,
     updatedResource: false,
     resourceUpdates: [],
@@ -443,6 +452,24 @@ async function installChatControlPlaneMock(
         state.configuredCredentialKeys = Object.keys(
           (body.credentials ?? {}) as Record<string, string>,
         ).sort();
+        if (provider.provider === "github") {
+          const privateKey = ((body.credentials ?? {}) as Record<string, string>)
+            .privateKey;
+          state.githubPrivateKeyMatchedFile =
+            state.githubPrivateKeyMatchedFile === true ||
+            privateKey === GITHUB_PRIVATE_KEY_FIXTURE;
+          state.githubPrivateKeyMatchedPaste =
+            state.githubPrivateKeyMatchedPaste === true ||
+            privateKey === GITHUB_PRIVATE_KEY_PASTE_FIXTURE;
+          if (state.setupAttempts === 1) {
+            await fulfill(
+              route,
+              { error: "GitHub rejected the supplied App credentials." },
+              422,
+            );
+            return;
+          }
+        }
         if (provider.provider === "telegram" && state.setupAttempts === 1) {
           const submittedToken = String(
             ((body.credentials ?? {}) as Record<string, string>).botToken ?? "",
@@ -664,11 +691,77 @@ async function fillProviderSetup(page: Page, provider: ProviderCase) {
       "github-webhook-secret",
     );
     await page.getByLabel("GitHub App ID").fill("123456");
-    await page
-      .getByLabel("Private key (PEM)")
-      .fill(
-        "-----BEGIN PRIVATE KEY-----\ne2e-redacted\n-----END PRIVATE KEY-----",
-      );
+    const privateKeyFile = page.getByLabel(
+      "Choose GitHub App private key file",
+    );
+    await privateKeyFile.setInputFiles({
+      name: "paperclip-test.pem",
+      mimeType: "application/x-pem-file",
+      buffer: Buffer.alloc(64 * 1024 + 1, "x"),
+    });
+    await expect(page.getByRole("alert")).toContainText(
+      "That file is too large. Choose a GitHub App private key smaller than 64 KB.",
+    );
+    await page.getByLabel("GitHub App ID").focus();
+    await page.getByLabel("GitHub App ID").press("Tab");
+    await expect(page.getByRole("alert")).toBeVisible();
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "Choose .pem file" }).click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles({
+      name: "paperclip-test.pem",
+      mimeType: "application/x-pem-file",
+      buffer: Buffer.from(GITHUB_PRIVATE_KEY_FIXTURE),
+    });
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText(
+      "Private key loaded. It stays in this form until you connect.",
+    );
+    await expect(
+      page.getByRole("button", { name: "Show private key" }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Private key (PEM)")).toHaveAttribute(
+      "type",
+      "password",
+    );
+    await expect(page.locator("textarea#github-private-key")).toHaveCount(0);
+    await expect(page.locator("body")).not.toContainText(
+      GITHUB_PRIVATE_KEY_FIXTURE,
+    );
+    await expect(page.locator("body")).not.toContainText("paperclip-test.pem");
+    await page.getByRole("button", { name: provider.setupButton }).click();
+    await expect(page.getByRole("alert")).toContainText("Connection failed");
+    await page.getByLabel("Private key (PEM)").evaluate(
+      (element, privateKey) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", privateKey);
+        element.dispatchEvent(
+          new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+      },
+      GITHUB_PRIVATE_KEY_PASTE_FIXTURE,
+    );
+    await expect(page.locator("textarea#github-private-key")).toHaveCount(0);
+    await expect(page.locator("body")).not.toContainText(
+      GITHUB_PRIVATE_KEY_PASTE_FIXTURE,
+    );
+    await page.getByRole("button", { name: "Show private key" }).click();
+    await expect(page.locator("textarea#github-private-key")).toHaveValue(
+      GITHUB_PRIVATE_KEY_PASTE_FIXTURE,
+    );
+    await page.getByRole("button", { name: "Hide private key" }).click();
+    await expect(page.locator("textarea#github-private-key")).toHaveCount(0);
+    await expect(page.getByLabel("Private key (PEM)")).toHaveAttribute(
+      "type",
+      "password",
+    );
+    await expect(page.locator("body")).not.toContainText(
+      GITHUB_PRIVATE_KEY_PASTE_FIXTURE,
+    );
   } else if (provider.provider === "microsoft-teams") {
     const clientId = "00000000-0000-4000-8000-000000000001";
     await page.getByLabel("Application / Client ID").fill(clientId);
@@ -1107,6 +1200,12 @@ test.describe.serial("native chat adapter UI", () => {
       await expectSetupRail(page);
       await expectMinimumProviderSetup(page, provider);
       await fillProviderSetup(page, provider);
+
+      if (provider.provider === "github") {
+        expect(mock.githubPrivateKeyMatchedFile).toBe(true);
+        expect(mock.githubPrivateKeyMatchedPaste).toBe(true);
+        expect(mock.setupAttempts).toBe(2);
+      }
 
       if (provider.provider === "telegram") {
         const submittedToken = "123456:e2e-redacted";

@@ -190,7 +190,8 @@ describe("chat connector UI contract", () => {
     expect(setup).toContain("pull_request_review_comment");
     expect(setup).toContain("Enable SSL verification");
     expect(setup).toContain("Only on this account");
-    expect(setup).toContain('WebkitTextSecurity: "disc"');
+    expect(setup).toContain('type="password"');
+    expect(setup).not.toContain("WebkitTextSecurity");
     expect(setup).toContain("Start Slack message test");
     expect(setup).toContain("member_joined_channel");
     expect(setup).toContain("member_left_channel");
@@ -238,6 +239,7 @@ describe("chat connector UI contract", () => {
   });
 
   it("keeps the current GitHub review artifact on the shipped customer-owned App path", () => {
+    const setup = source("./ChatEndpointSetup.tsx");
     const viewer = source("../../../../../doc/plans/chat-adapters/index.html");
     const generator = source(
       "../../../../../doc/plans/chat-adapters/generate-wireframes-v8.mjs",
@@ -253,6 +255,15 @@ describe("chat connector UI contract", () => {
     expect(viewer).toContain("Generate webhook secret");
     expect(setupWireframe).toContain("GitHub App ID");
     expect(setupWireframe).toContain("Private key (PEM)");
+    expect(setup).toContain("Choose .pem file");
+    expect(setup).toContain("Choose GitHub App private key file");
+    expect(setup).toContain("readGitHubPrivateKeyFile");
+    expect(setup).toContain("privateKeyReadGuard.invalidate()");
+    expect(setup).toContain("privateKeyFileLoading ||");
+    expect(setup).toContain("Show private key");
+    expect(setup).toContain('type="password"');
+    expect(setup).toContain("event.clipboardData.getData(\"text\")");
+    expect(setup).not.toContain("WebkitTextSecurity");
     expect(viewer).toContain("Metadata read");
     expect(viewer).toContain("Pull request review comment events");
     expect(viewer).not.toContain('id="s45"');

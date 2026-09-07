@@ -367,6 +367,7 @@ export async function createApp(
     allowedHostnames: string[];
     bindHost: string;
     authPublicBaseUrl?: string;
+    chatWebhookPublicBaseUrl?: string;
     authReady: boolean;
     companyDeletionEnabled: boolean;
     instanceId?: string;
@@ -465,6 +466,7 @@ export async function createApp(
     deferWebhookProcessing: true,
     heartbeat: connectionIntentHeartbeat,
     publicBaseUrl: opts.authPublicBaseUrl,
+    webhookPublicBaseUrl: opts.chatWebhookPublicBaseUrl,
     resolveNativeQuestion: (interaction) =>
       deliverNativeQuestionResponse(db, interaction),
     storage: opts.storageService,
