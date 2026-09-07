@@ -1,9 +1,168 @@
 {
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "delete": "Delete",
+    "language": "Language",
+    "loading": "Loading...",
+    "settings": "Settings",
+    "unlimitedBudget": "Unlimited budget"
+  },
   "app": {
     "noCompanies": {
       "title": "Create your first organization",
       "description": "Get started by creating an organization.",
       "newCompany": "New Organization"
+    },
+    "cloudCreateUnavailable": "Organizations are created in Paperclip Cloud. This instance can't reach it right now — try again from your Cloud portfolio.",
+    "onboarding": {
+      "addAgentToOrganization": "Add another agent to {{name}}",
+      "createAnotherOrganization": "Create another organization",
+      "addAgentDescription": "Run onboarding again to add an agent and a starter task for this organization.",
+      "createAnotherDescription": "Run onboarding again to create another organization and seed its first agent.",
+      "firstOrganizationDescription": "Get started by creating an organization and your first agent.",
+      "addAgent": "Add Agent",
+      "startOnboarding": "Start Onboarding"
+    },
+    "account": {
+      "openMenu": "Open account menu",
+      "board": "Board",
+      "signedIn": "Signed in",
+      "localWorkspaceBoard": "Local workspace board",
+      "settings": "Settings",
+      "viewProfile": "View profile",
+      "editProfile": "Edit profile",
+      "documentation": "Documentation",
+      "shareFeedback": "Share feedback",
+      "signOut": "Sign out",
+      "signingOut": "Signing out..."
+    },
+    "theme": {
+      "switchToLight": "Switch to light mode",
+      "switchToDark": "Switch to dark mode",
+      "description": "Toggle the app appearance."
+    },
+    "language": {
+      "menuLabel": "Language",
+      "current": "Current language",
+      "english": "English",
+      "simplifiedChinese": "Simplified Chinese"
+    },
+    "nav": {
+      "mobileNavigation": "Mobile navigation",
+      "newTask": "New Task",
+      "search": "Search",
+      "dashboard": "Dashboard",
+      "home": "Home",
+      "inbox": "Inbox",
+      "decisions": "Decisions",
+      "status": "Status",
+      "conferenceRoom": "Conference Room",
+      "work": "Work",
+      "tasks": "Tasks",
+      "create": "Create",
+      "projects": "Projects",
+      "routines": "Routines",
+      "artifacts": "Artifacts",
+      "cases": "Cases",
+      "pipelines": "Pipelines",
+      "goals": "Goals",
+      "workspaces": "Workspaces",
+      "org": "Org",
+      "organization": "Organization",
+      "organizations": "Organizations",
+      "agents": "Agents",
+      "skills": "Skills",
+      "connectors": "Connectors",
+      "audit": "Audit",
+      "timeline": "Timeline",
+      "costs": "Costs",
+      "activity": "Activity",
+      "settings": "Settings",
+      "unread": "unread",
+      "beta": "beta"
     }
+  },
+  "dashboard": {
+    "breadcrumbs": {
+      "dashboard": "Dashboard"
+    },
+    "empty": {
+      "welcome": "Welcome to Paperclip. Set up your first organization and agent to get started.",
+      "getStarted": "Get Started",
+      "selectOrganization": "Create or select an organization to view the dashboard."
+    },
+    "banners": {
+      "importedPausedTitle": "{{count}} imported agent is paused and will not run.",
+      "importedPausedTitle_plural": "{{count}} imported agents are paused and will not run.",
+      "importedPausedBody": "Agents from an organization import arrive paused as a safety default. Resume them so assigned tasks can start.",
+      "allPausedTitle": "All agents in this organization are paused — nothing will run.",
+      "allPausedBody": "Resume at least one agent to let assigned tasks start.",
+      "resumeAll": "Resume all",
+      "resuming": "Resuming...",
+      "reviewAgents": "Review agents",
+      "noAgents": "You have no agents.",
+      "createOneHere": "Create one here",
+      "activeBudgetIncident": "{{count}} active budget incident",
+      "activeBudgetIncident_plural": "{{count}} active budget incidents",
+      "budgetIncidentSummary": "{{agents}} agents paused · {{projects}} projects paused · {{approvals}} pending budget approvals",
+      "openBudgets": "Open budgets"
+    },
+    "metrics": {
+      "agentsEnabled": "Agents Enabled",
+      "agentsDescription": "{{running}} running, {{paused}} paused, {{errors}} errors",
+      "tasksInProgress": "Tasks In Progress",
+      "tasksDescription": "{{open}} open, {{blocked}} blocked",
+      "monthSpend": "Month Spend",
+      "monthBudgetDescription": "{{percent}}% of {{budget}} budget",
+      "pendingApprovals": "Pending Approvals",
+      "budgetApprovalsDescription": "{{count}} budget overrides awaiting board review",
+      "awaitingBoardReview": "Awaiting board review"
+    },
+    "charts": {
+      "runActivity": "Run Activity",
+      "tasksByPriority": "Tasks by Priority",
+      "tasksByStatus": "Tasks by Status",
+      "successRate": "Success Rate",
+      "last14Days": "Last 14 days"
+    },
+    "sections": {
+      "recentActivity": "Recent Activity",
+      "recentTasks": "Recent Tasks",
+      "noTasksYet": "No tasks yet."
+    }
+  },
+  "companies": {
+    "breadcrumbs": {
+      "organizations": "Organizations"
+    },
+    "newOrganization": "New Organization",
+    "loading": "Loading organizations...",
+    "actions": {
+      "rename": "Rename",
+      "unarchive": "Unarchive",
+      "deleteOrganization": "Delete Organization",
+      "deleting": "Deleting..."
+    },
+    "status": {
+      "active": "active",
+      "paused": "paused",
+      "archived": "archived"
+    },
+    "stats": {
+      "agent": "{{count}} agent",
+      "agent_plural": "{{count}} agents",
+      "task": "{{count}} task",
+      "task_plural": "{{count}} tasks",
+      "created": "Created {{time}}"
+    },
+    "deleteConfirm": "Delete this organization and all its data? This cannot be undone."
+  },
+  "chrome": {
+    "skipToMain": "Skip to Main Content",
+    "openSidebar": "Open sidebar",
+    "closeSidebar": "Close sidebar",
+    "hideProperties": "Hide properties",
+    "showProperties": "Show properties"
   }
 }

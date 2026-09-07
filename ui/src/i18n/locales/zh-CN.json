@@ -1,9 +1,168 @@
 {
+  "common": {
+    "cancel": "取消",
+    "close": "关闭",
+    "delete": "删除",
+    "language": "语言",
+    "loading": "加载中...",
+    "settings": "设置",
+    "unlimitedBudget": "不限预算"
+  },
   "app": {
     "noCompanies": {
-      "title": "创建您的第一家公司",
-      "description": "通过创建公司开始。",
-      "newCompany": "新公司"
+      "title": "创建你的第一个组织",
+      "description": "创建组织后即可开始使用。",
+      "newCompany": "新建组织"
+    },
+    "cloudCreateUnavailable": "组织需要在 Paperclip Cloud 中创建。此实例当前无法连接 Cloud，请稍后从 Cloud 资产页重试。",
+    "onboarding": {
+      "addAgentToOrganization": "为 {{name}} 再添加一个代理",
+      "createAnotherOrganization": "创建另一个组织",
+      "addAgentDescription": "再次运行引导流程，为此组织添加代理和初始任务。",
+      "createAnotherDescription": "再次运行引导流程，创建另一个组织并初始化第一个代理。",
+      "firstOrganizationDescription": "创建组织和第一个代理后即可开始使用。",
+      "addAgent": "添加代理",
+      "startOnboarding": "开始引导"
+    },
+    "account": {
+      "openMenu": "打开账户菜单",
+      "board": "控制台",
+      "signedIn": "已登录",
+      "localWorkspaceBoard": "本地工作区控制台",
+      "settings": "设置",
+      "viewProfile": "查看个人资料",
+      "editProfile": "编辑个人资料",
+      "documentation": "文档",
+      "shareFeedback": "反馈",
+      "signOut": "退出登录",
+      "signingOut": "正在退出..."
+    },
+    "theme": {
+      "switchToLight": "切换到浅色模式",
+      "switchToDark": "切换到深色模式",
+      "description": "切换应用外观。"
+    },
+    "language": {
+      "menuLabel": "语言",
+      "current": "当前语言",
+      "english": "English",
+      "simplifiedChinese": "简体中文"
+    },
+    "nav": {
+      "mobileNavigation": "移动端导航",
+      "newTask": "新建任务",
+      "search": "搜索",
+      "dashboard": "仪表盘",
+      "home": "首页",
+      "inbox": "收件箱",
+      "decisions": "决策",
+      "status": "状态",
+      "conferenceRoom": "会议室",
+      "work": "工作",
+      "tasks": "任务",
+      "create": "创建",
+      "projects": "项目",
+      "routines": "例行任务",
+      "artifacts": "产物",
+      "cases": "案例",
+      "pipelines": "流水线",
+      "goals": "目标",
+      "workspaces": "工作区",
+      "org": "组织",
+      "organization": "组织",
+      "organizations": "组织",
+      "agents": "代理",
+      "skills": "技能",
+      "connectors": "连接器",
+      "audit": "审计",
+      "timeline": "时间线",
+      "costs": "成本",
+      "activity": "活动",
+      "settings": "设置",
+      "unread": "未读",
+      "beta": "测试版"
     }
+  },
+  "dashboard": {
+    "breadcrumbs": {
+      "dashboard": "仪表盘"
+    },
+    "empty": {
+      "welcome": "欢迎使用 Paperclip。请先设置第一个组织和代理。",
+      "getStarted": "开始设置",
+      "selectOrganization": "创建或选择一个组织以查看仪表盘。"
+    },
+    "banners": {
+      "importedPausedTitle": "{{count}} 个导入的代理已暂停，暂时不会运行。",
+      "importedPausedTitle_plural": "{{count}} 个导入的代理已暂停，暂时不会运行。",
+      "importedPausedBody": "从组织导入的代理默认会暂停，这是安全保护。恢复后，已分配的任务即可开始。",
+      "allPausedTitle": "此组织中的所有代理都已暂停，当前不会运行任何任务。",
+      "allPausedBody": "至少恢复一个代理，已分配任务才能开始。",
+      "resumeAll": "全部恢复",
+      "resuming": "正在恢复...",
+      "reviewAgents": "查看代理",
+      "noAgents": "你还没有代理。",
+      "createOneHere": "在这里创建",
+      "activeBudgetIncident": "{{count}} 个活跃预算事件",
+      "activeBudgetIncident_plural": "{{count}} 个活跃预算事件",
+      "budgetIncidentSummary": "{{agents}} 个代理已暂停 · {{projects}} 个项目已暂停 · {{approvals}} 个预算审批待处理",
+      "openBudgets": "打开预算"
+    },
+    "metrics": {
+      "agentsEnabled": "已启用代理",
+      "agentsDescription": "{{running}} 个运行中，{{paused}} 个已暂停，{{errors}} 个错误",
+      "tasksInProgress": "进行中的任务",
+      "tasksDescription": "{{open}} 个打开，{{blocked}} 个阻塞",
+      "monthSpend": "本月支出",
+      "monthBudgetDescription": "已用 {{budget}} 预算的 {{percent}}%",
+      "pendingApprovals": "待审批",
+      "budgetApprovalsDescription": "{{count}} 个预算覆盖等待控制台审核",
+      "awaitingBoardReview": "等待控制台审核"
+    },
+    "charts": {
+      "runActivity": "运行活动",
+      "tasksByPriority": "按优先级统计任务",
+      "tasksByStatus": "按状态统计任务",
+      "successRate": "成功率",
+      "last14Days": "最近 14 天"
+    },
+    "sections": {
+      "recentActivity": "最近活动",
+      "recentTasks": "最近任务",
+      "noTasksYet": "暂无任务。"
+    }
+  },
+  "companies": {
+    "breadcrumbs": {
+      "organizations": "组织"
+    },
+    "newOrganization": "新建组织",
+    "loading": "正在加载组织...",
+    "actions": {
+      "rename": "重命名",
+      "unarchive": "取消归档",
+      "deleteOrganization": "删除组织",
+      "deleting": "正在删除..."
+    },
+    "status": {
+      "active": "活跃",
+      "paused": "已暂停",
+      "archived": "已归档"
+    },
+    "stats": {
+      "agent": "{{count}} 个代理",
+      "agent_plural": "{{count}} 个代理",
+      "task": "{{count}} 个任务",
+      "task_plural": "{{count}} 个任务",
+      "created": "创建于 {{time}}"
+    },
+    "deleteConfirm": "删除此组织及其所有数据？此操作无法撤销。"
+  },
+  "chrome": {
+    "skipToMain": "跳到主要内容",
+    "openSidebar": "打开侧边栏",
+    "closeSidebar": "关闭侧边栏",
+    "hideProperties": "隐藏属性",
+    "showProperties": "显示属性"
   }
 }

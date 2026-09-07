@@ -1,10 +1,18 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { beforeEach, describe, expect, it } from "vitest";
 import { t } from ".";
 import en from "./locales/en.json";
-import { localeMessages } from "./locales";
+import { LOCALE_STORAGE_KEY, localeMessages, resolveSupportedLocale } from "./locales";
+import { i18n, setLocale } from ".";
 import { validateLocaleMessages } from "./locale-validation";
 
 describe("locale validation", () => {
+  beforeEach(async () => {
+    window.localStorage.removeItem(LOCALE_STORAGE_KEY);
+    await i18n.changeLanguage("en");
+  });
+
   it("resolves English messages with key and default fallbacks", () => {
     expect(t("app.noCompanies.title")).toBe(en.app.noCompanies.title);
     expect(t("app.missing", { defaultValue: "Fallback" })).toBe("Fallback");
@@ -16,6 +24,30 @@ describe("locale validation", () => {
     for (const [locale, messages] of Object.entries(localeMessages)) {
       expect(validateLocaleMessages(messages), locale).toEqual([]);
     }
+  });
+
+  it("fills untranslated locale keys from English", () => {
+    const frenchMessages = localeMessages["fr"] as typeof en;
+    expect(frenchMessages.app.noCompanies.title).toBeDefined();
+    expect(frenchMessages.app.noCompanies.newCompany).toBeDefined();
+  });
+
+  it("normalizes Chinese browser locale variants to Simplified Chinese", () => {
+    expect(resolveSupportedLocale("zh")).toBe("zh-CN");
+    expect(resolveSupportedLocale("zh_Hans_CN")).toBe("zh-CN");
+    expect(resolveSupportedLocale("zh-Hant-TW")).toBe("zh-TW");
+    expect(resolveSupportedLocale("not-a-locale")).toBe("en");
+  });
+
+  it("persists an explicit language change", async () => {
+    window.localStorage.removeItem(LOCALE_STORAGE_KEY);
+
+    await setLocale("zh-CN");
+
+    expect(i18n.language).toBe("zh-CN");
+    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("zh-CN");
+
+    await setLocale("en");
   });
 
   it("rejects missing and extra nested keys", () => {
