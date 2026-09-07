@@ -437,3 +437,20 @@ bot token entered into Paperclip and a renewed provider login; GitHub needs its
 PEM and repository installation. Slack's signed-in OAuth page is reachable but
 its exposed test token still requires replacement and write-only entry. Telegram
 and Teams retain their previously documented rotation and tenant gates.
+
+Runtime checkpoint after commit `f535dde54`:
+
+- The combined fixes were committed and pushed to `codex/chat-adapters`; the UI
+  production build also passed (existing chunk-size warnings only).
+- The isolated 3103 server reports `f535dde54` and ready startup recovery. Its
+  board/auth origin is `http://127.0.0.1:3103`; only
+  `PAPERCLIP_CHAT_WEBHOOK_PUBLIC_URL` uses the current Cloudflare ingress.
+- GitHub setup still advertises the exact existing public webhook path. Public
+  health and company API checks remain **404**; an unsigned recognized GitHub
+  `ping` remains **401**. No board trust or exposure was broadened.
+- The in-app GitHub form was checked without reading credentials: its default
+  key control is `type=password`, no plaintext textarea is mounted, and
+  **Choose .pem file** is present. Both provider forms still have empty secret
+  fields; the known GitHub App ID and Discord application/server IDs were
+  filled again after the development reload. The setup tabs remain available
+  for the operator's write-only credential handoff.
