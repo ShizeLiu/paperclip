@@ -158,6 +158,184 @@
     },
     "deleteConfirm": "Delete this organization and all its data? This cannot be undone."
   },
+  "settings": {
+    "title": "Settings",
+    "backToApp": "Back to app",
+    "tabs": {
+      "general": "General",
+      "profile": "Profile",
+      "members": "Members",
+      "secrets": "Secrets",
+      "environments": "Environments",
+      "access": "Access",
+      "export": "Export",
+      "import": "Import",
+      "experimental": "Experimental",
+      "plugins": "Plugins",
+      "adapters": "Adapters"
+    },
+    "breadcrumbs": {
+      "companyFallback": "Company"
+    },
+    "companyGeneral": {
+      "noOrganizationSelected": "No organization selected. Select an organization from the switcher above.",
+      "sections": {
+        "general": "General",
+        "appearance": "Appearance",
+        "hiring": "Hiring",
+        "dangerZone": "Danger Zone"
+      },
+      "organizationName": "Organization name",
+      "organizationNameHint": "The display name for your organization.",
+      "description": "Description",
+      "descriptionHint": "Optional description shown in the organization profile.",
+      "descriptionPlaceholder": "Optional organization description",
+      "cloudRenameWarning": "Renaming can change this company's task ID prefix. Existing task IDs are renumbered and old task links stop resolving.",
+      "logo": "Logo",
+      "logoHint": "Upload a PNG, JPEG, WEBP, GIF, or SVG logo image.",
+      "removeLogo": "Remove logo",
+      "removing": "Removing...",
+      "logoUploadFailed": "Logo upload failed",
+      "uploadingLogo": "Uploading logo...",
+      "saveChanges": "Save changes",
+      "saving": "Saving...",
+      "saved": "Saved",
+      "failedToSave": "Failed to save",
+      "requireApprovalForNewHires": "Require board approval for new hires",
+      "requireApprovalForNewHiresHint": "New agent hires stay pending until approved by board.",
+      "archiveDescription": "Archive this organization to hide it from the sidebar. This persists in the database.",
+      "archiveConfirm": "Archive organization \"{{name}}\"? It will be hidden from the sidebar.",
+      "archiving": "Archiving...",
+      "alreadyArchived": "Already archived",
+      "archiveOrganization": "Archive organization",
+      "failedToArchive": "Failed to archive organization"
+    },
+    "interactionGovernance": {
+      "title": "Interaction governance",
+      "failedToSave": "Failed to save interaction governance",
+      "description": {
+        "prefix": "Thread interactions are open by default:",
+        "afterAnyone": "in the organization, the board or any agent, including the one that asked, can respond. Narrow a kind only when you need to.",
+        "afterDefaultPolicy": "is the audience new cards get when the requester does not ask for one;",
+        "afterCap": "narrows every request of that kind and can never widen one. Tool-approval confirmations always stay",
+        "suffix": "."
+      },
+      "headers": {
+        "kind": "Kind",
+        "defaultPolicy": "Default policy",
+        "cap": "Cap"
+      },
+      "kinds": {
+        "suggestTasks": "Suggested tasks",
+        "askUserQuestions": "Ask user questions",
+        "confirmations": "Confirmations",
+        "checkboxConfirmations": "Checkbox confirmations",
+        "itemVerdicts": "Item verdicts",
+        "connectionRequests": "Connection requests"
+      },
+      "policyLabels": {
+        "anyone": "Anyone",
+        "anyoneDefault": "Anyone (default)",
+        "noCap": "No cap",
+        "notCreator": "Anyone except creator",
+        "humanOnly": "Human only"
+      },
+      "policyEffects": {
+        "defaultUnset": "New cards are open — the board or any agent can respond, including the one that asked.",
+        "capUnset": "A request keeps whatever audience it asks for.",
+        "defaultNotCreator": "New cards exclude the agent that created them, so the answer comes from someone else.",
+        "defaultHumanOnly": "New cards wait for a person on the board. Agents are turned away.",
+        "capNotCreator": "Even a card that asks for Anyone is narrowed to exclude its creator.",
+        "capHumanOnly": "Every card of this kind waits for a person, whatever it asked for."
+      },
+      "defaultPolicyAria": "Default resolver audience for {{kind}}",
+      "capAria": "Resolver cap for {{kind}}"
+    },
+    "instanceGeneral": {
+      "loading": "Loading general settings...",
+      "description": "Configure instance-wide preferences.",
+      "descriptionWithTopics": "Configure instance-wide preferences including {{topics}}.",
+      "topics": {
+        "logDisplay": "log display",
+        "keyboardShortcuts": "keyboard shortcuts",
+        "backupRetention": "backup retention",
+        "dataSharing": "data sharing"
+      },
+      "topicList": {
+        "separator": ", ",
+        "finalSeparator": " and "
+      },
+      "errors": {
+        "updateFailed": "Failed to update general settings.",
+        "loadFailed": "Failed to load general settings.",
+        "signOutFailed": "Failed to sign out."
+      },
+      "status": {
+        "ready": "Ready",
+        "notReady": "Not ready",
+        "setupRequired": "Setup required",
+        "active": "Active",
+        "none": "None"
+      },
+      "deployment": {
+        "title": "Deployment and auth",
+        "mode": {
+          "localTrusted": "Local trusted",
+          "authenticatedPublic": "Authenticated public",
+          "authenticatedPrivate": "Authenticated private"
+        },
+        "localTrusted": "Local trusted mode is optimized for a local operator. Browser requests run as local board context and no sign-in is required.",
+        "authenticatedPublic": "Authenticated public mode requires sign-in for board access and is intended for public URLs.",
+        "authenticatedPrivate": "Authenticated private mode requires sign-in and is intended for LAN, VPN, or other private-network deployments.",
+        "authReadiness": "Auth readiness",
+        "bootstrapStatus": "Bootstrap status",
+        "bootstrapInvite": "Bootstrap invite"
+      },
+      "censorUsername": {
+        "title": "Censor username in logs",
+        "description": "Hide the username segment in home-directory paths and similar operator-visible log output. Standalone username mentions outside of paths are not yet masked in the live transcript view. This is off by default.",
+        "toggleAria": "Toggle username log censoring"
+      },
+      "keyboardShortcuts": {
+        "title": "Keyboard shortcuts",
+        "description": "Enable app keyboard shortcuts, including inbox navigation and global shortcuts like creating tasks or toggling panels. This is off by default.",
+        "toggleAria": "Toggle keyboard shortcuts"
+      },
+      "backupRetention": {
+        "title": "Backup retention",
+        "description": "Configure how long automatic database backups are retained. Backups run roughly every hour and are compressed with gzip. Within the daily window all backups are kept; beyond that, one backup per week and one per month are preserved.",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly",
+        "days": "{{count}} day",
+        "days_plural": "{{count}} days",
+        "weeks": "{{count}} week",
+        "weeks_plural": "{{count}} weeks",
+        "months": "{{count}} month",
+        "months_plural": "{{count}} months"
+      },
+      "feedbackSharing": {
+        "title": "AI feedback sharing",
+        "description": "Control whether thumbs up and thumbs down votes can send the voted AI output to Paperclip Labs. Votes are always saved locally.",
+        "terms": "Read our terms of service",
+        "promptNotice": "No default is saved yet. The next thumbs up or thumbs down choice will ask once and then save the answer here.",
+        "alwaysAllow": "Always allow",
+        "alwaysAllowDescription": "Share voted AI outputs automatically.",
+        "dontAllow": "Don't allow",
+        "dontAllowDescription": "Keep voted AI outputs local only.",
+        "retestRemovePrefix": "To retest the first-use prompt in local dev, remove the",
+        "retestAfterPreferenceKey": "key from the",
+        "retestAfterSettingsRow": "JSON row for this instance, or set it back to",
+        "retestSuffix": "Unset and \"prompt\" both mean no default has been chosen yet."
+      },
+      "signOut": {
+        "title": "Sign out",
+        "description": "Sign out of this Paperclip instance. You will be redirected to the login page.",
+        "button": "Sign out",
+        "signingOut": "Signing out..."
+      }
+    }
+  },
   "chrome": {
     "skipToMain": "Skip to Main Content",
     "openSidebar": "Open sidebar",

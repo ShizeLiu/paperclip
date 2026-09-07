@@ -62,7 +62,7 @@ export const supportedLocales = Object.keys(localeMessages);
 
 export type SupportedLocale = string;
 
-export function isSupportedLocale(locale: string): locale is SupportedLocale {
+export function isSupportedLocale(locale: string): boolean {
   return locale in localeMessages;
 }
 

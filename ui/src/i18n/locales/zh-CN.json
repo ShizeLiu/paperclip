@@ -158,6 +158,184 @@
     },
     "deleteConfirm": "删除此组织及其所有数据？此操作无法撤销。"
   },
+  "settings": {
+    "title": "设置",
+    "backToApp": "返回应用",
+    "tabs": {
+      "general": "常规",
+      "profile": "个人资料",
+      "members": "成员",
+      "secrets": "密钥",
+      "environments": "环境",
+      "access": "访问权限",
+      "export": "导出",
+      "import": "导入",
+      "experimental": "实验功能",
+      "plugins": "插件",
+      "adapters": "适配器"
+    },
+    "breadcrumbs": {
+      "companyFallback": "组织"
+    },
+    "companyGeneral": {
+      "noOrganizationSelected": "未选择组织。请从上方切换器选择一个组织。",
+      "sections": {
+        "general": "常规",
+        "appearance": "外观",
+        "hiring": "招聘",
+        "dangerZone": "危险区域"
+      },
+      "organizationName": "组织名称",
+      "organizationNameHint": "组织的显示名称。",
+      "description": "描述",
+      "descriptionHint": "显示在组织资料中的可选描述。",
+      "descriptionPlaceholder": "可选的组织描述",
+      "cloudRenameWarning": "重命名可能会改变此组织的任务 ID 前缀。现有任务 ID 会被重新编号，旧任务链接将无法解析。",
+      "logo": "Logo",
+      "logoHint": "上传 PNG、JPEG、WEBP、GIF 或 SVG 格式的 Logo 图片。",
+      "removeLogo": "移除 Logo",
+      "removing": "正在移除...",
+      "logoUploadFailed": "Logo 上传失败",
+      "uploadingLogo": "正在上传 Logo...",
+      "saveChanges": "保存更改",
+      "saving": "正在保存...",
+      "saved": "已保存",
+      "failedToSave": "保存失败",
+      "requireApprovalForNewHires": "新招聘需要控制台审批",
+      "requireApprovalForNewHiresHint": "新招聘的代理会保持待处理，直到控制台批准。",
+      "archiveDescription": "归档此组织后会从侧边栏隐藏。此状态会保存在数据库中。",
+      "archiveConfirm": "归档组织“{{name}}”？归档后它会从侧边栏隐藏。",
+      "archiving": "正在归档...",
+      "alreadyArchived": "已归档",
+      "archiveOrganization": "归档组织",
+      "failedToArchive": "归档组织失败"
+    },
+    "interactionGovernance": {
+      "title": "交互治理",
+      "failedToSave": "保存交互治理设置失败",
+      "description": {
+        "prefix": "线程交互默认开放给：",
+        "afterAnyone": "组织内任何人，包括控制台或任何代理，也包括发起请求的代理，都可以响应。只有需要收窄时才调整某一种类。",
+        "afterDefaultPolicy": "是在请求方未指定受众时，新卡片采用的受众；",
+        "afterCap": "会收窄该种类的每个请求，且永远不会扩大受众。工具审批确认始终保持为",
+        "suffix": "。"
+      },
+      "headers": {
+        "kind": "种类",
+        "defaultPolicy": "默认策略",
+        "cap": "上限"
+      },
+      "kinds": {
+        "suggestTasks": "建议任务",
+        "askUserQuestions": "询问用户问题",
+        "confirmations": "确认",
+        "checkboxConfirmations": "复选确认",
+        "itemVerdicts": "条目裁决",
+        "connectionRequests": "连接请求"
+      },
+      "policyLabels": {
+        "anyone": "任何人",
+        "anyoneDefault": "任何人（默认）",
+        "noCap": "无上限",
+        "notCreator": "除创建者外的任何人",
+        "humanOnly": "仅人工"
+      },
+      "policyEffects": {
+        "defaultUnset": "新卡片默认开放：控制台或任何代理都可以响应，包括发起请求的代理。",
+        "capUnset": "请求会保留自己要求的受众。",
+        "defaultNotCreator": "新卡片会排除创建它的代理，因此由其他人回答。",
+        "defaultHumanOnly": "新卡片会等待控制台上的人员处理。代理会被拒绝。",
+        "capNotCreator": "即使卡片请求任何人响应，也会被收窄为排除创建者。",
+        "capHumanOnly": "此种类的每张卡片都会等待人员处理，无论它原本请求什么。"
+      },
+      "defaultPolicyAria": "{{kind}}的默认解析受众",
+      "capAria": "{{kind}}的解析上限"
+    },
+    "instanceGeneral": {
+      "loading": "正在加载常规设置...",
+      "description": "配置实例级偏好设置。",
+      "descriptionWithTopics": "配置实例级偏好设置，包括{{topics}}。",
+      "topics": {
+        "logDisplay": "日志显示",
+        "keyboardShortcuts": "键盘快捷键",
+        "backupRetention": "备份保留",
+        "dataSharing": "数据共享"
+      },
+      "topicList": {
+        "separator": "、",
+        "finalSeparator": "和"
+      },
+      "errors": {
+        "updateFailed": "更新常规设置失败。",
+        "loadFailed": "加载常规设置失败。",
+        "signOutFailed": "退出登录失败。"
+      },
+      "status": {
+        "ready": "就绪",
+        "notReady": "未就绪",
+        "setupRequired": "需要设置",
+        "active": "有效",
+        "none": "无"
+      },
+      "deployment": {
+        "title": "部署与认证",
+        "mode": {
+          "localTrusted": "本地信任",
+          "authenticatedPublic": "已认证公开",
+          "authenticatedPrivate": "已认证私有"
+        },
+        "localTrusted": "本地信任模式针对本地操作者优化。浏览器请求会以本地控制台上下文运行，且不需要登录。",
+        "authenticatedPublic": "已认证的公开模式要求登录后才能访问控制台，适用于公开 URL。",
+        "authenticatedPrivate": "已认证的私有模式要求登录，适用于局域网、VPN 或其他私有网络部署。",
+        "authReadiness": "认证就绪状态",
+        "bootstrapStatus": "初始化状态",
+        "bootstrapInvite": "初始化邀请"
+      },
+      "censorUsername": {
+        "title": "在日志中隐藏用户名",
+        "description": "隐藏主目录路径和类似操作者可见日志输出中的用户名片段。实时转录视图中，路径以外的独立用户名提及暂未遮蔽。此项默认关闭。",
+        "toggleAria": "切换日志用户名隐藏"
+      },
+      "keyboardShortcuts": {
+        "title": "键盘快捷键",
+        "description": "启用应用键盘快捷键，包括收件箱导航，以及创建任务或切换面板等全局快捷键。此项默认关闭。",
+        "toggleAria": "切换键盘快捷键"
+      },
+      "backupRetention": {
+        "title": "备份保留",
+        "description": "配置自动数据库备份的保留时长。备份大约每小时运行一次，并使用 gzip 压缩。在每日窗口内会保留所有备份；超过该窗口后，每周和每月各保留一个备份。",
+        "daily": "每日",
+        "weekly": "每周",
+        "monthly": "每月",
+        "days": "{{count}} 天",
+        "days_plural": "{{count}} 天",
+        "weeks": "{{count}} 周",
+        "weeks_plural": "{{count}} 周",
+        "months": "{{count}} 个月",
+        "months_plural": "{{count}} 个月"
+      },
+      "feedbackSharing": {
+        "title": "AI 反馈共享",
+        "description": "控制点赞和点踩是否可以将被投票的 AI 输出发送给 Paperclip Labs。投票始终会保存在本地。",
+        "terms": "阅读服务条款",
+        "promptNotice": "尚未保存默认选择。下一次点赞或点踩时会询问一次，然后把答案保存到这里。",
+        "alwaysAllow": "始终允许",
+        "alwaysAllowDescription": "自动共享被投票的 AI 输出。",
+        "dontAllow": "不允许",
+        "dontAllowDescription": "被投票的 AI 输出仅保留在本地。",
+        "retestRemovePrefix": "如需在本地开发中重新测试首次提示，请从此实例的",
+        "retestAfterPreferenceKey": "键所在的",
+        "retestAfterSettingsRow": "JSON 行中移除此键，或将其重新设为",
+        "retestSuffix": "未设置和 \"prompt\" 都表示尚未选择默认值。"
+      },
+      "signOut": {
+        "title": "退出登录",
+        "description": "退出此 Paperclip 实例。你将被重定向到登录页面。",
+        "button": "退出登录",
+        "signingOut": "正在退出..."
+      }
+    }
+  },
   "chrome": {
     "skipToMain": "跳到主要内容",
     "openSidebar": "打开侧边栏",
