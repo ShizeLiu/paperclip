@@ -371,3 +371,22 @@ Paperclip and a restored Eigenjoy browser session for live provider proof.
 GitHub still needs its private PEM; Slack and Telegram need the previously
 documented exposed tokens rotated; Teams needs an eligible tenant/admin setup.
 None of these gates is represented as a successful live conversation.
+
+#### Test ingress renewed after the verified-code restart
+
+- The isolated server was restarted with verified code `f2724d8f2`; its private
+  health response reports that commit and ready startup recovery.
+- The old quick tunnel expired (`Unauthorized: Tunnel not found`) while its
+  process kept reconnecting. It was replaced with
+  `https://doctor-files-whole-concepts.trycloudflare.com`. This supersedes the
+  earlier `tile-daily-angle-rather` hostname for the live fixture.
+- The existing webhook-only proxy still rejects the public board health and
+  company API paths with **404**. A recognized unsigned GitHub `ping` reaches
+  Paperclip and returns **401**. No local-trusted board/API was exposed.
+- GitHub App `paperclip-maya-e2e-0906` now has its existing webhook URL updated
+  to the replacement host, with the same endpoint public ID and secret. The
+  provider displayed its successful saved-app notice; no credential was read,
+  generated, rotated, or deleted during that URL update.
+- The GitHub Paperclip form has App ID `4853886` filled in and still needs the
+  operator's PEM. The Discord form retains its known application/server IDs and
+  still needs the bot token. This does not establish a successful agent run.
