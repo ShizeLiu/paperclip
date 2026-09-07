@@ -67,6 +67,9 @@ import {
   connectionOwnerProfile,
   type ConnectionOwnerProfile,
 } from "./connection-owner";
+import { useTranslation } from "@/i18n";
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 type ConnectorRowModel = {
   key: string;
@@ -115,34 +118,34 @@ function additionalConnectionHref(
   return `${path}?${params.toString()}`;
 }
 
-function connectionState(connection: ToolConnection): ConnectionState {
+function connectionState(connection: ToolConnection, translate: Translate): ConnectionState {
   if (connection.status === "draft") {
     return {
       kind: "draft",
-      label: "Setup incomplete",
-      message: "Finish setup before agents can use this account.",
+      label: translate("pages.connectors.status.setupIncomplete"),
+      message: translate("pages.connectors.status.finishSetupMessage"),
     };
   }
   if (connection.enabled === false || connection.status === "disabled") {
     return {
       kind: "paused",
-      label: "Paused",
-      message: "Agents can’t use this account right now.",
+      label: translate("pages.connectors.status.paused"),
+      message: translate("pages.connectors.status.pausedMessage"),
     };
   }
   if (isToolConnectionAttentionHealth(connection.healthStatus)) {
     return {
       kind: "attention",
-      label: "Needs attention",
+      label: translate("pages.connectors.status.needsAttention"),
       message:
         connection.healthMessage ??
         connection.lastError ??
         (connection.authKind === "oauth"
-          ? "Sign in again to restore access."
-          : "Replace the credential to restore access."),
+          ? translate("pages.connectors.status.signInAgain")
+          : translate("pages.connectors.status.replaceCredential")),
     };
   }
-  return { kind: "connected", label: "Connected", message: null };
+  return { kind: "connected", label: translate("pages.connectors.status.connected"), message: null };
 }
 
 function connectionRank(connection: ToolConnection): number {
@@ -154,7 +157,7 @@ function rowRank(row: ConnectorRowModel): number {
   return row.connections.length > 0 ? 1 : 0;
 }
 
-function connectorAction(row: ConnectorRowModel): {
+function connectorAction(row: ConnectorRowModel, translate: Translate): {
   label: string;
   href: string | null;
   title?: string;
@@ -163,26 +166,26 @@ function connectorAction(row: ConnectorRowModel): {
   if (row.connections.length > 0) {
     if (row.entry && applicationId) {
       return {
-        label: "Add account",
+        label: translate("pages.connectors.addAccount"),
         href: additionalConnectionHref(row.entry, applicationId),
       };
     }
     return {
-      label: "Add account",
+      label: translate("pages.connectors.addAccount"),
       href: applicationId ? `/apps/app/${applicationId}/permissions` : null,
     };
   }
 
   if (row.entry?.availability?.available === false) {
     return {
-      label: "Unavailable",
+      label: translate("pages.connectors.unavailable"),
       href: null,
-      title: row.entry.availability.reason ?? "This connector is unavailable on this instance.",
+      title: row.entry.availability.reason ?? translate("pages.connectors.unavailableTitle"),
     };
   }
-  if (row.entry) return { label: "Connect", href: connectHrefFor(row.entry) };
+  if (row.entry) return { label: translate("pages.connectors.connect"), href: connectHrefFor(row.entry) };
   return {
-    label: "Connect",
+    label: translate("pages.connectors.connect"),
     href: applicationId ? `/apps/app/${applicationId}/permissions` : null,
   };
 }
@@ -200,6 +203,7 @@ function accountActionHref(row: ConnectorRowModel, connection: ToolConnection): 
  * account; unconnected providers retain the same catalog setup flows.
  */
 export function Browse() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
@@ -209,9 +213,9 @@ export function Browse() {
   const [connectionToRemove, setConnectionToRemove] = useState<ConnectionRemovalTarget | null>(null);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Connectors" }]);
+    setBreadcrumbs([{ label: t("app.nav.connectors") }]);
     return () => setBreadcrumbs([]);
-  }, [setBreadcrumbs]);
+  }, [setBreadcrumbs, t]);
 
   const galleryQuery = useQuery({
     queryKey: queryKeys.apps.gallery(selectedCompanyId ?? "__none__"),
@@ -243,18 +247,21 @@ export function Browse() {
       queryClient.invalidateQueries({ queryKey: queryKeys.tools.applications(selectedCompanyId!) });
       queryClient.invalidateQueries({ queryKey: queryKeys.apps.attention(selectedCompanyId!) });
       pushToast({
-        title: "Connection removed",
+        title: t("pages.connectors.connectionRemoved"),
         body: target.remainingConnectionCount > 0
-          ? `${target.providerName} still has ${target.remainingConnectionCount} active ${target.remainingConnectionCount === 1 ? "connection" : "connections"} available to agents.`
-          : `${target.providerName} is no longer available to agents through this connection. Its saved credentials were deleted.`,
+          ? t("pages.connectors.connectionRemovedRemaining", {
+              provider: target.providerName,
+              count: target.remainingConnectionCount,
+            })
+          : t("pages.connectors.connectionRemovedLast", { provider: target.providerName }),
         tone: "success",
       });
       setConnectionToRemove(null);
     },
     onError: (error) =>
       pushToast({
-        title: "Couldn't remove the connection",
-        body: error instanceof Error ? error.message : "Please try again.",
+        title: t("pages.connectors.removeFailed"),
+        body: error instanceof Error ? error.message : t("pages.connectors.tryAgain"),
         tone: "error",
       }),
   });
@@ -344,7 +351,7 @@ export function Browse() {
         key: `application:${application.id}`,
         slug: applicationSlug ?? application.id,
         name: application.name,
-        description: application.description ?? "A custom connector configured for this organization.",
+        description: application.description ?? t("pages.connectors.customDescription"),
         brandKey: applicationSlug ?? application.name,
         entry: null,
         applications: [application],
@@ -387,7 +394,7 @@ export function Browse() {
   if (!selectedCompanyId) {
     return (
       <div className="p-6 text-sm text-muted-foreground">
-        Select an organization to manage connectors.
+        {t("pages.connectors.selectOrganization")}
       </div>
     );
   }
@@ -407,8 +414,8 @@ export function Browse() {
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search connectors…"
-            aria-label="Search connectors"
+            placeholder={t("pages.connectors.searchPlaceholder")}
+            aria-label={t("pages.connectors.searchAria")}
             className="pl-9"
           />
         </div>
@@ -421,7 +428,7 @@ export function Browse() {
         >
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <p className="min-w-0 flex-1">
-            Couldn’t load every connector. Existing accounts are shown where available.
+            {t("pages.connectors.loadFailed")}
           </p>
           <Button
             type="button"
@@ -433,13 +440,13 @@ export function Browse() {
               void connectionsQuery.refetch();
             }}
           >
-            Try again
+            {t("pages.connectors.tryAgain")}
           </Button>
         </div>
       ) : null}
 
       {loading ? (
-        <div className="space-y-3" aria-label="Loading connectors">
+        <div className="space-y-3" aria-label={t("pages.connectors.loading")}>
           {Array.from({ length: 6 }).map((_, index) => (
             <Skeleton key={index} className="h-24 w-full rounded-xl" />
           ))}
@@ -447,10 +454,10 @@ export function Browse() {
       ) : nothingMatches ? (
         <p className="flex items-center gap-2 rounded-xl border border-dashed border-border bg-card px-4 py-6 text-sm text-muted-foreground">
           <Link2 className="h-4 w-4" />
-          No connectors match “{query.trim()}”.
+          {t("pages.connectors.noMatches", { query: query.trim() })}
         </p>
       ) : (
-        <div className="space-y-3" role="list" aria-label="Connector list">
+        <div className="space-y-3" role="list" aria-label={t("pages.connectors.listAria")}>
           {visibleRows.map((row) => (
             <ConnectorCard
               key={row.key}
@@ -459,6 +466,7 @@ export function Browse() {
               userProfileById={userProfileById}
               onNavigate={navigate}
               onRequestRemove={setConnectionToRemove}
+              translate={t}
             />
           ))}
           {showCustomConnector ? (
@@ -476,18 +484,23 @@ export function Browse() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Remove {connectionToRemove?.accountName ?? "this"} connection?
+              {t("pages.connectors.removeTitle", {
+                name: connectionToRemove?.accountName ?? t("pages.connectors.thisConnection"),
+              })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {connectionToRemove && connectionToRemove.childConnectionCount > 0
-                ? `This also removes ${connectionToRemove.childConnectionCount} connected ${connectionToRemove.childConnectionCount === 1 ? "service" : "services"} and takes agent access away immediately. The Composio key and child session credentials are deleted.`
+                ? t("pages.connectors.removeWithChildren", { count: connectionToRemove.childConnectionCount })
                 : connectionToRemove && connectionToRemove.remainingConnectionCount > 0
-                ? `This connection's saved credentials are deleted and agents lose access through it immediately. They can still use ${connectionToRemove.providerName} through ${connectionToRemove.remainingConnectionCount} other active ${connectionToRemove.remainingConnectionCount === 1 ? "connection" : "connections"}.`
-                : "The saved credentials are deleted and agents lose access immediately. Connecting it again later requires a new sign-in or key."}
+                ? t("pages.connectors.removeOneOfMany", {
+                    provider: connectionToRemove.providerName,
+                    count: connectionToRemove.remainingConnectionCount,
+                  })
+                : t("pages.connectors.removeLast")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={removeConnection.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={removeConnection.isPending}>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={!connectionToRemove || removeConnection.isPending}
@@ -497,7 +510,7 @@ export function Browse() {
               }}
             >
               {removeConnection.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 />}
-              {removeConnection.isPending ? "Removing…" : "Remove connection"}
+              {removeConnection.isPending ? t("pages.connectors.removing") : t("pages.connectors.removeConnection")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -512,14 +525,16 @@ function ConnectorCard({
   userProfileById,
   onNavigate,
   onRequestRemove,
+  translate,
 }: {
   row: ConnectorRowModel;
   allConnections: ToolConnection[];
   userProfileById: ReadonlyMap<string, ConnectionOwnerProfile>;
   onNavigate: (href: string) => void;
   onRequestRemove: (target: ConnectionRemovalTarget) => void;
+  translate: Translate;
 }) {
-  const action = connectorAction(row);
+  const action = connectorAction(row, translate);
   return (
     <div
       role="listitem"
@@ -563,6 +578,7 @@ function ConnectorCard({
               connection={connection}
               owner={connectionOwnerProfile(connection, userProfileById)}
               onNavigate={onNavigate}
+              translate={translate}
               onRemove={() => {
                 const accountName = connectionDisplayNameForOwner(
                   connection,
@@ -598,14 +614,16 @@ function ConnectionAccountRow({
   owner,
   onNavigate,
   onRemove,
+  translate,
 }: {
   row: ConnectorRowModel;
   connection: ToolConnection;
   owner: ConnectionOwnerProfile | null;
   onNavigate: (href: string) => void;
   onRemove: () => void;
+  translate: Translate;
 }) {
-  const state = connectionState(connection);
+  const state = connectionState(connection, translate);
   const actionHref = accountActionHref(row, connection);
   const accountName = connectionDisplayNameForOwner(connection, row.name, owner);
 
@@ -617,7 +635,7 @@ function ConnectionAccountRow({
           <button
             type="button"
             className="block max-w-full cursor-pointer truncate text-left text-sm font-medium text-foreground hover:underline focus-visible:underline"
-            aria-label={`Open ${accountName} permissions`}
+            aria-label={translate("pages.connectors.openPermissionsAria", { name: accountName })}
             onClick={() => onNavigate(`/apps/${connection.id}/permissions`)}
           >
             {accountName}
@@ -638,7 +656,7 @@ function ConnectionAccountRow({
 
       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span>Connected by</span>
+          <span>{translate("pages.connectors.connectedBy")}</span>
           <ConnectionOwnerIdentity owner={owner} />
         </div>
         {state.kind === "attention" || state.kind === "draft" ? (
@@ -648,7 +666,7 @@ function ConnectionAccountRow({
             variant="outline"
             onClick={() => onNavigate(actionHref)}
           >
-            {state.kind === "attention" ? "Reconnect" : "Finish setup"}
+            {state.kind === "attention" ? translate("pages.connectors.reconnect") : translate("pages.connectors.finishSetup")}
           </Button>
         ) : null}
         <DropdownMenu>
@@ -657,19 +675,19 @@ function ConnectionAccountRow({
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label={`Manage ${accountName} connection`}
+              aria-label={translate("pages.connectors.manageConnectionAria", { name: accountName })}
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={() => onNavigate(`/apps/${connection.id}/permissions`)}>
-              Permissions
+              {translate("pages.connectors.permissions")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={onRemove}>
               <Trash2 />
-              Remove connection
+              {translate("pages.connectors.removeConnection")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -712,6 +730,7 @@ function ConnectionStatusIcon({ state }: { state: ConnectionState }) {
 }
 
 function CustomConnectorCard({ onNavigate }: { onNavigate: (href: string) => void }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -725,9 +744,9 @@ function CustomConnectorCard({ onNavigate }: { onNavigate: (href: string) => voi
           <Link2 className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-foreground">Connect your own tool</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t("pages.connectors.customTitle")}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Add a custom MCP server or paste an existing configuration.
+            {t("pages.connectors.customDescription")}
           </p>
         </div>
         <Button
@@ -738,7 +757,7 @@ function CustomConnectorCard({ onNavigate }: { onNavigate: (href: string) => voi
           aria-controls="custom-connector-options"
           onClick={() => setExpanded((open) => !open)}
         >
-          {expanded ? "Close" : "Connect"}
+          {expanded ? t("common.close") : t("pages.connectors.connect")}
         </Button>
       </div>
 
@@ -749,14 +768,14 @@ function CustomConnectorCard({ onNavigate }: { onNavigate: (href: string) => voi
         >
           <CustomConnectorOption
             icon={ServerCog}
-            title="Connect your own MCP server"
-            description="Enter the URL for a custom or self-hosted MCP server."
+            title={t("pages.connectors.customMcpTitle")}
+            description={t("pages.connectors.customMcpDescription")}
             onClick={() => onNavigate("/apps/byo")}
           />
           <CustomConnectorOption
             icon={ClipboardPaste}
-            title="Paste a config"
-            description="Paste an existing setup snippet and connect it."
+            title={t("pages.connectors.pasteConfigTitle")}
+            description={t("pages.connectors.pasteConfigDescription")}
             onClick={() => onNavigate("/apps/advanced/paste-config")}
           />
         </div>
