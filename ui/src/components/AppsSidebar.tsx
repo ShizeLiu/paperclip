@@ -4,6 +4,7 @@ import { useSmokeLabEnabled } from "@/hooks/useSmokeLabEnabled";
 import { useReviewCount } from "@/pages/apps/useReviewCount";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { contextualSidebarStyles } from "./contextual-sidebar-styles";
+import { useTranslation } from "@/i18n";
 
 /**
  * Secondary sidebar for the Apps area.
@@ -13,6 +14,7 @@ import { contextualSidebarStyles } from "./contextual-sidebar-styles";
  * developer surfaces remain hidden unless one is explicitly enabled.
  */
 export function AppsSidebar() {
+  const { t } = useTranslation();
   const reviewCount = useReviewCount();
   const { enabled: smokeLabEnabled } = useSmokeLabEnabled();
   const developerTabs = DEVELOPER_TABS.filter((tab) => {
@@ -25,19 +27,19 @@ export function AppsSidebar() {
   return (
     <aside className="w-full h-full min-h-0 border-r border-border bg-background flex flex-col">
       <nav
-        aria-label="Connectors"
+        aria-label={t("app.nav.connectors")}
         data-slot="contextual-sidebar-nav"
         className={contextualSidebarStyles.nav}
       >
         <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
-          <SidebarNavItem to="/apps" label="Browse" icon={Store} end />
+          <SidebarNavItem to="/apps" label={t("pages.connectors.sidebar.browse")} icon={Store} end />
           <SidebarNavItem
             to="/apps/review"
-            label="Review"
+            label={t("pages.connectors.sidebar.review")}
             icon={ShieldQuestion}
             badge={reviewCount > 0 ? reviewCount : undefined}
             badgeTone="warning"
-            badgeLabel="waiting for your OK"
+            badgeLabel={t("pages.connectors.sidebar.waitingForOk")}
           />
         </div>
         {developerTabs.length > 0 ? (
@@ -46,20 +48,20 @@ export function AppsSidebar() {
               data-slot="contextual-sidebar-section-label"
               className={contextualSidebarStyles.sectionLabel}
             >
-              Developer
+              {t("pages.connectors.sidebar.developer")}
             </div>
             <p
               data-slot="contextual-sidebar-section-description"
               className={contextualSidebarStyles.sectionDescription}
             >
-              Advanced setup for developers.
+              {t("pages.connectors.sidebar.advancedDescription")}
             </p>
             <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
               {developerTabs.map((tab) => (
                 <SidebarNavItem
                   key={tab.key}
                   to={advancedTabHref(tab.key)}
-                  label={tab.label}
+                  label={t(`pages.connectors.sidebar.developerTabs.${tab.key}`, { defaultValue: tab.label })}
                   icon={tab.icon}
                   end
                 />
