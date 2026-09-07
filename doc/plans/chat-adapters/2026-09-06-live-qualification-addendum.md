@@ -454,3 +454,45 @@ Runtime checkpoint after commit `f535dde54`:
   fields; the known GitHub App ID and Discord application/server IDs were
   filled again after the development reload. The setup tabs remain available
   for the operator's write-only credential handoff.
+
+### GitHub private fixtures and installation completed — 2026-09-07 UTC
+
+The signed-in in-app browser completed the remaining pre-credential setup:
+
+- Created private, disposable repositories
+  [`cryppadotta/paperclip-chat-e2e-enabled`](https://github.com/cryppadotta/paperclip-chat-e2e-enabled)
+  (ID `1359763399`) and
+  [`cryppadotta/paperclip-chat-e2e-disabled`](https://github.com/cryppadotta/paperclip-chat-e2e-disabled)
+  (ID `1359763710`). Both contain only their initial README; no production data,
+  existing repository contents, or generated agent work was added. They are kept
+  for the pending positive/negative reach tests, not deleted during setup.
+- Installed the existing **Paperclip Maya E2E 0906** App on that account as
+  [installation `159668881`](https://github.com/settings/installations/159668881).
+  The resulting installation settings visibly retained **Only select
+  repositories**, with remove controls for exactly the two new fixtures.
+  Permissions are Metadata read, Issues read/write, and Pull requests read/write.
+  No existing repositories or all-repositories access were granted.
+- The current ingress received a GitHub webhook and returned **200** at
+  `2026-09-07T04:47:40Z`. Paperclip remains draft and disabled with zero endpoint
+  resources/conversations, null bot/installation identity, and the earlier signed
+  ping timestamp unchanged. This is the intended pre-PEM boundary: draft
+  endpoints accept only setup ping processing; installation events are ignored
+  without a retained body or new ingress action. The installation will be
+  discovered authoritatively through GitHub's API during credential configure.
+  The 200 alone is not proof of authenticated installation ingestion or a chat.
+- GitHub's private PEM remains absent from the masked setup field. No additional
+  private key was created or read. Discord's developer page was rechecked and
+  shows **Choose an account** / **Please log in again**; its Paperclip token field
+  is still empty. The parallel audit found no pre-credential live path remaining
+  for Slack, Telegram, or Teams beyond their documented human-controlled gates.
+
+This advances GitHub setup only. A real issue/PR message, agent run, reply,
+reaction, question continuation, and the recovery/governance matrix remain
+unqualified until the App PEM is entered and Paperclip connects.
+
+The corresponding pre-PEM installation regression and the complete chat
+integration suite passed **252/252**, zero skips, on fresh database
+`chat_adapters_test_20260907_github_install_draft`; report:
+`.paperclip-runtime/chat-adapters-live/github-install-draft-integration.json`.
+Only the regression and evidence documentation changed in this checkpoint;
+the running, previously browser-qualified implementation remains `f535dde54`.

@@ -34,9 +34,9 @@ A webhook provider is not deployment-qualified merely because it passed through 
 
 ### Current setup gates — 2026-09-07 UTC
 
-GitHub App creation and sudo confirmation have completed; its PEM and repository
-installation are still required. Discord App creation completed and the operator
-reported the Clawd installation; Paperclip still needs the bot token, and the
+GitHub App creation, sudo confirmation, and installation on the two private test
+repositories have completed; its PEM is still required. Discord App creation
+completed and the operator reported the Clawd installation; Paperclip still needs the bot token, and the
 browser session needs renewed login for provider-side proof. Slack and Telegram
 require replacement of the previously exposed test tokens. Teams still requires
 an eligible work/school tenant and its admin-controlled setup. See the

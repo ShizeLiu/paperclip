@@ -5069,6 +5069,116 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     });
   });
 
+  it("ignores a signed GitHub installation before App credentials exist", async () => {
+    const fixture = await seedCompany();
+    const runtime = new FakeChatSdkRuntime();
+    const { service } = createService(runtime);
+    const endpoint = await service.create(
+      fixture.companyId,
+      {
+        provider: "github",
+        assignedAgentId: fixture.assignedAgentId,
+        name: "Maya GitHub pre-key installation",
+      },
+      "owner-user",
+    );
+    const { webhookSecret } = await service.generateSetupSecret(
+      endpoint.id,
+      "owner-user",
+    );
+    await recordGitHubWebhookVerification(
+      service,
+      endpoint.publicId,
+      webhookSecret,
+    );
+    const endpointBeforeInstallation = await service.get(endpoint.id);
+    const webhookVerifiedAt =
+      endpointBeforeInstallation.setup?.webhookVerifiedAt;
+    expect(webhookVerifiedAt).toEqual(expect.any(String));
+    const [connectionBeforeInstallation] = await db
+      .select({
+        enabled: toolConnections.enabled,
+        refs: toolConnections.credentialSecretRefs,
+        status: toolConnections.status,
+      })
+      .from(toolConnections)
+      .where(eq(toolConnections.id, endpoint.connectionId));
+    const deliveryId = `github-pre-key-installation-${randomUUID()}`;
+
+    const response = await service.handleWebhook(
+      endpoint.publicId,
+      "github",
+      signedGitHubWebhookRequest({
+        delivery: deliveryId,
+        event: "installation",
+        payload: {
+          action: "created",
+          installation: {
+            id: 987_654_321,
+            account: { id: 1, login: "paperclip-e2e", type: "User" },
+            permissions: {
+              issues: "write",
+              metadata: "read",
+              pull_requests: "write",
+            },
+            suspended_at: null,
+          },
+        },
+        webhookSecret,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe("ignored");
+    expect(runtime.configurations.has(endpoint.id)).toBe(false);
+    await expect(service.get(endpoint.id)).resolves.toMatchObject({
+      status: "draft",
+      providerAccountId: null,
+      botExternalId: null,
+      healthMessage: "GitHub webhook verified",
+      setup: {
+        step: "provider_setup",
+        webhookSecretConfigured: true,
+        webhookVerifiedAt,
+      },
+    });
+    await expect(service.listResources(endpoint.id)).resolves.toEqual([]);
+    await expect(service.listConversations(endpoint.id)).resolves.toEqual([]);
+    await expect(
+      db
+        .select({ id: chatActions.id })
+        .from(chatActions)
+        .where(
+          and(
+            eq(chatActions.endpointId, endpoint.id),
+            eq(chatActions.kind, "github_webhook_ingress"),
+            eq(
+              chatActions.providerActionId,
+              `github_webhook_ingress:${deliveryId}`,
+            ),
+          ),
+        ),
+    ).resolves.toEqual([]);
+    const [connectionAfterInstallation] = await db
+      .select({
+        enabled: toolConnections.enabled,
+        refs: toolConnections.credentialSecretRefs,
+        status: toolConnections.status,
+      })
+      .from(toolConnections)
+      .where(eq(toolConnections.id, endpoint.connectionId));
+    expect(connectionAfterInstallation).toEqual(connectionBeforeInstallation);
+    expect(connectionAfterInstallation).toMatchObject({
+      enabled: false,
+      refs: [
+        expect.objectContaining({
+          configPath: "credentials.webhookSecret",
+        }),
+      ],
+      status: "draft",
+    });
+  });
+
   it("singleflights concurrent cold GitHub runtime initialization", async () => {
     const fixture = await seedCompany();
     const { endpoint, runtime, service, webhookSecret } =
