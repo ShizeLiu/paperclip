@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { agentsApi } from "@/api/agents";
 import { useCompany } from "@/context/CompanyContext";
+import { useTranslation } from "@/i18n";
 import { queryKeys } from "@/lib/queryKeys";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
 import { SidebarNavItem } from "./SidebarNavItem";
@@ -39,11 +40,29 @@ const localIcons = {
 } satisfies Record<AgentLocalDetailView, typeof Sparkles>;
 
 const auditItems = [
-  { section: "activity", label: "Activity", icon: Activity },
-  { section: "runs", label: "Runs", icon: PlayCircle },
-  { section: "costs", label: "Costs", icon: ReceiptText },
-  { section: "budgets", label: "Budgets", icon: BadgeDollarSign },
+  { section: "activity", labelKey: "pages.agentDetail.sidebar.activity", icon: Activity },
+  { section: "runs", labelKey: "pages.agentDetail.sidebar.runs", icon: PlayCircle },
+  { section: "costs", labelKey: "pages.agentDetail.sidebar.costs", icon: ReceiptText },
+  { section: "budgets", labelKey: "pages.agentDetail.sidebar.budgets", icon: BadgeDollarSign },
 ] as const;
+
+const localLabelKeys: Record<AgentLocalDetailView, string> = {
+  overview: "pages.agentDetail.sidebar.overview",
+  instructions: "pages.agentDetail.sidebar.instructions",
+  skills: "pages.agentDetail.sidebar.skills",
+  runtime: "pages.agentDetail.sidebar.harnessRuntime",
+  secrets: "pages.agentDetail.sidebar.secrets",
+  tools: "pages.agentDetail.sidebar.tools",
+  permissions: "pages.agentDetail.sidebar.permissionsTrust",
+  "api-keys": "pages.agentDetail.sidebar.apiKeys",
+  revisions: "pages.agentDetail.sidebar.revisions",
+};
+
+const sectionLabelKeys: Record<string, string> = {
+  Agent: "pages.agentDetail.sidebar.agent",
+  Runtime: "pages.agentDetail.sidebar.runtime",
+  Governance: "pages.agentDetail.sidebar.governance",
+};
 
 export function AgentContextualSidebar({
   agentRef,
@@ -54,6 +73,7 @@ export function AgentContextualSidebar({
   agentId?: string;
   agentName?: string;
 }) {
+  const { t } = useTranslation();
   const { selectedCompanyId } = useCompany();
   const shouldResolveAgent = !agentId || !agentName;
   const { data: resolvedAgent } = useQuery({
@@ -87,7 +107,7 @@ export function AgentContextualSidebar({
               data-slot="contextual-sidebar-section-label"
               className={contextualSidebarStyles.sectionLabel}
             >
-              {section.label}
+              {t(sectionLabelKeys[section.label] ?? section.label)}
             </p>
             <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
               {section.items.map((item) => {
@@ -96,7 +116,7 @@ export function AgentContextualSidebar({
                   <SidebarNavItem
                     key={item.value}
                     to={href}
-                    label={item.label}
+                    label={t(localLabelKeys[item.value], { defaultValue: item.label })}
                     icon={localIcons[item.value]}
                   />
                 );
@@ -110,18 +130,20 @@ export function AgentContextualSidebar({
             data-slot="contextual-sidebar-section-label"
             className={contextualSidebarStyles.sectionLabel}
           >
-            Audit
+            {t("pages.agentDetail.sidebar.audit")}
           </p>
           <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
             {resolvedId ? auditItems.map((item) => (
               <SidebarNavItem
                 key={item.section}
                 to={agentScopedAuditHref(resolvedId, item.section)}
-                label={item.label}
+                label={t(item.labelKey)}
                 icon={item.icon}
               />
             )) : (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading audit links…</p>
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                {t("pages.agentDetail.sidebar.loadingAuditLinks")}
+              </p>
             )}
           </div>
         </div>
