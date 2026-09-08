@@ -35,6 +35,7 @@ import {
   useResourceMemberships,
 } from "../hooks/useResourceMemberships";
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
+import { useTranslation } from "@/i18n";
 import {
   AGENT_SORT_MODE_UPDATED_EVENT,
   getAgentSortModeStorageKey,
@@ -138,6 +139,7 @@ function SidebarAgentItem({
   onToggleStar?: (agent: Agent, starred: boolean) => void;
   starPending?: boolean;
 }) {
+  const { t } = useTranslation();
   const routeRef = agentRouteRef(agent);
   const href = activeTab ? `${agentUrl(agent)}/${activeTab}` : agentUrl(agent);
   const editHref = `${agentUrl(agent)}/configuration`;
@@ -145,19 +147,19 @@ function SidebarAgentItem({
   const isPaused = agent.status === "paused";
   const isBudgetPaused = isPaused && agent.pauseReason === "budget";
   const hasInvalidOrgChain = agent.orgChainHealth?.status === "invalid_org_chain";
-  const pauseResumeLabel = isPaused ? "Resume agent" : "Pause agent";
+  const pauseResumeLabel = isPaused ? t("agentActions.resumeAgent") : t("agentActions.pauseAgent");
   const pauseResumeDisabled = disabled || agent.status === "pending_approval" || isBudgetPaused || (isPaused && hasInvalidOrgChain);
   const pauseResumeDisabledLabel = disabled
-    ? "Updating..."
+    ? t("agentActions.updating")
     : isBudgetPaused
-      ? "Budget paused"
+      ? t("agentActions.budgetPaused")
       : isPaused && hasInvalidOrgChain
-        ? "Invalid org chain"
+        ? t("agentActions.invalidOrgChain")
       : pauseResumeLabel;
   const showBuiltInLifecycle = builtInStatus === "needs_setup" || builtInStatus === "pending_approval";
   const trailingLabel = [
-    showBuiltInLifecycle ? `Built-in agent ${builtInStatus.replace(/_/g, " ")}` : null,
-    hasInvalidOrgChain ? "Invalid reporting chain" : null,
+    showBuiltInLifecycle ? t("agentActions.builtInAgentStatus", { status: builtInStatus.replace(/_/g, " ") }) : null,
+    hasInvalidOrgChain ? t("agentActions.invalidReportingChain") : null,
   ].filter(Boolean).join(", ") || undefined;
 
   // C11 (DECISION-SHEET.md): the row itself is a SidebarNavItem, so agent rows
@@ -181,14 +183,14 @@ function SidebarAgentItem({
           <span className="ml-1 flex shrink-0 items-center gap-1">
             {showBuiltInLifecycle ? <BuiltInLifecycleChip status={builtInStatus} compact /> : null}
             {hasInvalidOrgChain ? (
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label="Invalid reporting chain" />
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("agentActions.invalidReportingChain")} />
             ) : null}
           </span>
         ) : undefined
       }
       trailingLabel={trailingLabel}
       liveAccessory={
-        agent.pauseReason === "budget" ? <BudgetSidebarMarker title="Agent paused by budget" /> : undefined
+        agent.pauseReason === "budget" ? <BudgetSidebarMarker title={t("agentActions.agentPausedByBudget")} /> : undefined
       }
     />
   );
@@ -228,7 +230,7 @@ function SidebarAgentItem({
                 ? "opacity-100"
                 : "pointer-events-none opacity-0 group-hover/agent:pointer-events-auto group-hover/agent:opacity-100 group-focus-within/agent:pointer-events-auto group-focus-within/agent:opacity-100",
             )}
-            aria-label={`Open actions for ${agent.name}`}
+            aria-label={t("agentActions.openActionsFor", { name: agent.name })}
           >
             <MoreHorizontal className="h-3.5 w-3.5" />
           </Button>
@@ -248,7 +250,7 @@ function SidebarAgentItem({
                 ) : (
                   <Star className={cn("size-4", starred && "fill-amber-500 text-amber-500")} />
                 )}
-                <span>{starred ? "Remove from starred" : "Star agent"}</span>
+                <span>{starred ? t("agentActions.removeFromStarred") : t("agentActions.starAgent")}</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
@@ -261,7 +263,7 @@ function SidebarAgentItem({
               }}
             >
               <Pencil className="size-4" />
-              <span>Edit agent</span>
+              <span>{t("agentActions.editAgent")}</span>
             </Link>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
@@ -271,7 +273,7 @@ function SidebarAgentItem({
               onPauseResume(agent, isPaused ? "resume" : "pause");
             }}
             disabled={pauseResumeDisabled}
-            title={isBudgetPaused ? "Agent was paused by budget limits" : undefined}
+            title={isBudgetPaused ? t("agentActions.agentPausedByBudgetLimits") : undefined}
           >
             {isPaused ? <PlayCircle className="size-4" /> : <PauseCircle className="size-4" />}
             <span>{pauseResumeDisabledLabel}</span>
@@ -285,7 +287,7 @@ function SidebarAgentItem({
             disabled={leaving}
           >
             {leaving ? <Loader2 className="size-4 motion-safe:animate-spin" /> : <LogOut className="size-4" />}
-            <span>{leaving ? "Leaving..." : "Leave agent"}</span>
+            <span>{leaving ? t("membershipAction.leaving") : t("agentActions.leaveAgent")}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

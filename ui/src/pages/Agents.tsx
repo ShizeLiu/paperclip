@@ -469,7 +469,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
                 <AgentActionButtons
                   agent={agent}
                   companyId={selectedCompanyId}
-                  runLabel="Run Heartbeat"
+                  runLabel={t("agentActions.runHeartbeat")}
                   showStatus={false}
                   canRunWithProviderTrace={canUseProviderTrace}
                 />
